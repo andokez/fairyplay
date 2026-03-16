@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FairyPlay</title>
+  <link rel="stylesheet" href="styles.css" />
+  <script src="https://cdn.dashjs.org/latest/dash.all.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="sidebar-collapse-bar">
+        <button id="sidebarToggleBtn" class="btn sidebar-collapse-btn" title="Encoger sidebar">◀</button>
+      </div>
+      <h1>FairyPlay</h1>
+
+      <section class="panel compact">
+        <h2>Bibliotecas</h2>
+        <div class="row">
+          <label class="btn file-btn">
+            Importar JSON
+            <input id="importFile" type="file" hidden />
+          </label>
+          <button id="exportCurrentBtn" class="btn">Exportar actual</button>
+        </div>
+
+        <label class="label">Cargar desde URL JSON</label>
+        <div class="row">
+          <input id="importUrlInput" class="input grow" type="text" placeholder="URL raw / dropbox / json" />
+          <button id="importUrlBtn" class="btn">Cargar</button>
+        </div>
+
+        <div id="libraryList" class="library-list"></div>
+      </section>
+
+<section class="panel compact">
+  <h2>Crear elemento</h2>
+
+  <label class="label">Tipo</label>
+  <div class="row">
+    <button id="typeGroupBtn" class="btn active-toggle">Group</button>
+    <button id="typeStationBtn" class="btn">Station</button>
+    <button id="typeVideoBtn" class="btn">Video</button>
+  </div>
+
+  <label class="label">Nombre</label>
+  <input id="entryNameInput" class="input" type="text" placeholder="Nombre" />
+
+  <label class="label">Imagen</label>
+  <input id="entryImageInput" class="input" type="text" placeholder="https://..." />
+
+  <label class="label">Info / sinopsis</label>
+  <textarea id="entryInfoInput" class="input textarea" rows="5" placeholder="Sinopsis, ficha, notas..."></textarea>
+
+  <div id="videoFields" style="display:none;">
+    <label class="label">URL del vídeo o lista</label>
+    <input id="entryUrlInput" class="input" type="text" placeholder=".mp4 / .m3u8 / .mpd / URL de lista" />
+
+    <label class="label">Referer</label>
+    <input id="entryRefererInput" class="input" type="text" placeholder="https://host.com" />
+
+    <label class="check">
+      <input id="entryImportToggle" type="checkbox" />
+      <span>Import = es una lista JSON</span>
+    </label>
+
+    <label class="check">
+      <input id="entryEmbedToggle" type="checkbox" />
+      <span>Embed = necesita resolución manual</span>
+    </label>
+  </div>
+
+  <div class="row">
+    <button id="addEntryBtn" class="btn primary">Añadir aquí</button>
+    <button id="clearLibrariesBtn" class="btn danger">Borrar bibliotecas</button>
+  </div>
+</section>
+
+      <section class="panel compact">
+        <h2>Opciones</h2>
+        <label class="check">
+          <input id="autoplayToggle" type="checkbox" checked />
+          <span>Autoplay siguiente</span>
+        </label>
+        <label class="check">
+          <input id="rememberToggle" type="checkbox" checked />
+          <span>Recordar progreso</span>
+        </label>
+        <label class="check">
+          <input id="boostToggle" type="checkbox" checked />
+          <span>Permitir boost de volumen</span>
+        </label>
+        <p class="hint">Rueda del ratón sobre <b>+tiempo</b> para cambiar el salto.</p>
+        <p class="hint">Click central en lateral izquierdo/derecho del vídeo para atrás/adelante.</p>
+        </section><!-- AÑADIR DESPUÉS DE LA SECCIÓN DE OPCIONES -->
+        	  
+    </aside>
+
+    <main class="main">
+      <div id="playerSection" class="player-section hidden">
+        <div class="player-shell">
+          <div id="playerWrap" class="player-wrap is-empty">
+            <div id="playerEmpty" class="player-empty">
+              <div class="player-placeholder-text">Vídeo no cargado</div>
+            </div>
+            <video id="video" playsinline></video>
+            <iframe id="youtubeFrame" class="youtube-frame hidden" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen referrerpolicy="origin-when-cross-origin"></iframe>
+            <div id="clickLayer" class="click-layer"></div>
+            <div class="side-hit left" id="leftHit"></div>
+            <div class="side-hit right" id="rightHit"></div>
+
+            <div class="controls">
+              <button id="playPauseBtn" class="control-btn">▶</button>
+              <button id="backBtn" class="control-btn">-<span id="jumpBackLabel">10</span>s</button>
+              <button id="forwardBtn" class="control-btn">+<span id="jumpForwardLabel">10</span>s</button>
+              <input id="progressRange" class="progress" type="range" min="0" max="100" step="0.1" value="0" />
+              <div id="timeLabel" class="time-label">00:00 / 00:00</div>
+              <button id="nextItemBtn" class="control-btn">⏭</button>
+              <div id="volumeWrap" class="volume-wrap">
+                <button id="muteBtn" class="control-btn">🔊</button>
+                <div id="volumePanel" class="volume-panel">
+                  <input id="volumeRange" class="volume" type="range" min="0" max="200" step="1" value="100" />
+                  <span id="volumeLabel" class="volume-label">100%</span>
+                </div>
+              </div>
+              <button id="fullscreenBtn" class="control-btn">⛶</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <section id="contextPanel" class="panel">
+        <div class="now-playing-row">
+          <div class="now-playing-main">
+            <div class="now-playing-topline">
+              <div id="nowPlaying" class="now-playing">Explorador</div>
+              <button id="infoToggleBtn" class="btn info-toggle-btn hidden" type="button" aria-label="Mostrar información">i</button>
+            </div>
+            <div id="infoPanel" class="info-panel hidden"></div>
+          </div>
+
+          <button id="debugToggleBtn" class="btn debug-inline-btn" type="button">Consola</button>
+        </div>
+
+        <pre id="debug" class="debug hidden"></pre>
+
+        <div id="manualResolveBox" class="manual-resolve hidden">
+          <div class="hint">Este host necesita intervención manual para captcha / continue.</div>
+          <button id="manualResolveBtn" class="btn primary">Resolver captcha en ventana</button>
+        </div>
+      </section>
+
+<section class="browser panel">
+  <div class="browser-top browser-top-fixed">
+    <div class="browser-left">
+      <button id="backFolderBtn" class="btn">Atrás</button>
+      <div class="browser-heading">
+        <div id="libraryName" class="browser-title">Bibliotecas cargadas</div>
+      </div>
+    </div>
+
+<div class="browser-search-wrap">
+  <div class="search-box">
+    <input id="searchInput" class="input search-input" type="text" placeholder="Buscar por nombre..." />
+    <button id="clearSearchBtn" class="search-clear hidden" type="button" aria-label="Borrar búsqueda">✕</button>
+  </div>
+</div>
+
+    <div class="browser-right">
+      <button id="refreshLibraryBtn" class="btn hidden">Actualizar lista</button>
+    </div>
+  </div>
+
+  <div id="breadcrumbs" class="breadcrumbs"></div>
+  <div id="browserGrid" class="browser-grid"></div>
+</section>
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
