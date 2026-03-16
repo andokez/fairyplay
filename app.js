@@ -1357,7 +1357,7 @@ async function openStation(item, options={}) {
   }
 
   if (isEmbedStation(item)) {
-    setDebug(`URL recibida al pinchar:\n${originalUrl}\n\nEste enlace está marcado como embed. En la versión web pública no se puede usar la resolución manual con ventana. Se intentará la resolución normal por backend.`)
+    setDebug(`URL recibida al pinchar:\n${originalUrl}\n\nEste enlace está marcado como embed. Primero se intentará la resolución automática por backend. Si falla, podrás abrir el enlace en una pestaña nueva.`)
   }
 
   let urlToPlay = originalUrl
@@ -1796,23 +1796,19 @@ on(typeGroupBtn,"click",()=>setEntryType("group"))
 on(typeStationBtn,"click",()=>setEntryType("station"))
 on(typeVideoBtn,"click",()=>setEntryType("video"))
 on(addEntryBtn,"click",()=>{ addEntryAtCurrentNode() })
-on(manualResolveBtn,"click",async ()=>{
+on(manualResolveBtn,"click",()=>{
   if(!pendingManualResolveUrl){
-    setDebug("No hay URL pendiente para resolución manual.")
+    setDebug("No hay URL pendiente para abrir.")
     return
   }
 
-  const resolved = await resolveStreamUrlManual(
-    pendingManualResolveUrl,
-    pendingManualResolveReferer || ""
-  )
-
-  if(!resolved){
-    setDebug("No se pudo resolver manualmente.\nHaz el captcha y pulsa Proceed to video en la ventana abierta.")
+  const win=window.open(pendingManualResolveUrl, "_blank", "noopener,noreferrer")
+  if(!win){
+    setDebug("El navegador bloqueó la ventana emergente. Permite popups para este sitio e inténtalo otra vez.")
     return
   }
 
-  playUrl(resolved, pendingManualResolveTitle || "Reproduciendo")
+  setDebug("Se abrió el enlace en una pestaña nueva.")
 })
 on(infoToggleBtn,"click",()=>toggleCurrentInfo())
 on(debugToggleBtn,"click",()=>{
