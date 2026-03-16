@@ -87,7 +87,7 @@ let currentInfoExpanded=false
 
 const RESOLVER_CONFIG = {
   useBackend: true,
-  backendUrl: 'https://fairyplay.onrender.com',
+  backendUrl: 'https://fairyplay.onrender.com/api/resolve',
   embedResolvers: false
 }
 
@@ -1357,16 +1357,7 @@ async function openStation(item, options={}) {
   }
 
   if (isEmbedStation(item)) {
-    const resolved = await resolveStreamUrlManual(originalUrl, item?.referer || "")
-    if (!resolved) {
-      showManualResolve(originalUrl, item?.name || item?.title || "", item?.referer || "")
-      setDebug(`URL recibida al pinchar:\n${originalUrl}\n\nEste enlace está marcado como embed.\nSe abrió la resolución manual para captcha / continue.`)
-      return
-    }
-    setLinkStatus(originalUrl, "ok")
-    renderBrowser()
-    playUrl(resolved, item?.name || item?.title || "")
-    return
+    setDebug(`URL recibida al pinchar:\n${originalUrl}\n\nEste enlace está marcado como embed. En la versión web pública no se puede usar la resolución manual con ventana. Se intentará la resolución normal por backend.`)
   }
 
   let urlToPlay = originalUrl
