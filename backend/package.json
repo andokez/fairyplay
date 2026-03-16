@@ -1,15 +1,12 @@
 {
-  "name": "autoplayer_hdfull",
+  "name": "fairyplay",
   "version": "1.0.0",
-  "description": "",
-  "main": "app.js",
+  "private": true,
+  "main": "backend-resolver.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node backend-resolver.js",
+    "postinstall": "npx playwright install chromium"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "type": "commonjs",
   "dependencies": {
     "playwright": "^1.58.2"
   }
