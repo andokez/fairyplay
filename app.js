@@ -86,8 +86,8 @@ let currentInfoText=""
 let currentInfoExpanded=false
 
 const RESOLVER_CONFIG = {
-  useBackend: false,
-  backendUrl: '',
+  useBackend: true,
+  backendUrl: 'https://fairyplay.onrender.com',
   embedResolvers: false
 }
 
