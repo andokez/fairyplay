@@ -599,7 +599,7 @@ function getCurrentNodeStations(){
   if(!node) return []
 
   if(isStationContainer(node)){
-    return (Array.isArray(node.videos) ? node.videos : []).filter(v => v && v.url && !v.import)
+    return (Array.isArray(node.stations) ? node.stations : []).filter(v => v && v.url && !v.import)
   }
 
   return (Array.isArray(node.stations) ? node.stations : []).filter(st => st && st.url && !st.import)
@@ -673,11 +673,15 @@ ${candidates[0]}`)
 }
 function isEmbedStation(item){ const v=item?.embed; return v===true || String(v||"").toLowerCase()==="true" || String(v||"")==="1" }
 function isStationContainer(item){
-  return !!item && Array.isArray(item.videos)
+  return !!item &&
+    !item?.url &&
+    Array.isArray(item.stations) &&
+    !Array.isArray(item.groups)
 }
 function detectEditorKindFromItem(item, fallbackKind="group"){
-  if(isStationContainer(item)) return "station"
   if(!!item && (typeof item.url==="string" && item.url.trim()!=="")) return "video"
+  if(isStationContainer(item)) return "station"
+  if(Array.isArray(item?.groups)) return "group"
   return fallbackKind==="video" || fallbackKind==="station" || fallbackKind==="group"
     ? fallbackKind
     : "group"
@@ -886,7 +890,7 @@ function flattenGroup(group, path){
 
   for(const st of stations){
     if(isStationContainer(st)){
-      const videos=Array.isArray(st.videos) ? st.videos : []
+      const videos=Array.isArray(st.stations) ? st.stations : []
       for(const vd of videos){
         if(isPlayableLeaf(vd)){
           items.push({
@@ -1030,12 +1034,23 @@ function renderLibraryList(){
 function getCurrentNode(){ return browserStack[browserStack.length-1] || null }
 function getNodeChildren(node){
   if(isStationContainer(node)){
-    const videos=Array.isArray(node?.videos) ? node.videos.map(v => ({ kind:"video", data:v })) : []
+    const videos=Array.isArray(node?.stations)
+      ? node.stations.map(v => ({ kind:"video", data:v }))
+      : []
     return videos
   }
 
-  const groups=Array.isArray(node?.groups) ? node.groups.map(g => ({ kind:"group", data:g })) : []
-  const stations=Array.isArray(node?.stations) ? node.stations.map(s => ({ kind:"station", data:s })) : []
+  const groups=Array.isArray(node?.groups)
+    ? node.groups.map(g => ({ kind:"group", data:g }))
+    : []
+
+  const stations=Array.isArray(node?.stations)
+    ? node.stations.map(s => ({
+        kind: (s && typeof s.url==="string" && s.url.trim()!=="") ? "video" : "station",
+        data: s
+      }))
+    : []
+
   return [...groups, ...stations]
 }
 function fillEditorFromItem(item, kind, parentNode){
@@ -1069,7 +1084,6 @@ function fillEditorFromItem(item, kind, parentNode){
     entryImageInput.value=item?.image||item?.img||""
     entryInfoInput.value=item?.info||""
     entryUrlInput.value=item?.url||""
-    entryRefererInput.value=item?.referer||""
     entryImportToggle.checked=!!item?.import
     entryEmbedToggle.checked=isEmbedStation(item)
   }
@@ -1105,8 +1119,7 @@ function moveBrowserItem(item, kind, direction, parentNode){
 
   let arr=null
   if(kind==="group") arr=parentNode.groups
-  else if(kind==="station") arr=parentNode.stations
-  else if(kind==="video") arr=parentNode.videos
+  else if(kind==="station" || kind==="video") arr=parentNode.stations
 
   if(!Array.isArray(arr)) return
   const idx=arr.indexOf(item)
@@ -1123,8 +1136,7 @@ function deleteBrowserItem(item, kind, parentNode){
 
   let arr=null
   if(kind==="group") arr=parentNode.groups
-  else if(kind==="station") arr=parentNode.stations
-  else if(kind==="video") arr=parentNode.videos
+  else if(kind==="station" || kind==="video") arr=parentNode.stations
 
   if(!Array.isArray(arr)) return
   const idx=arr.indexOf(item)
@@ -1198,16 +1210,16 @@ function collectNodeSearchResults(startNode, term, baseStack=[]){
 
       if(itemSearchName(station).includes(normalizedTerm)){
         results.push({
-          kind:"station",
+          kind: stationIsContainer ? "station" : "video",
           data:station,
-          stack:stationStack,
+          stack: stationIsContainer ? stationStack : [...stack],
           pathLabel:makePathLabel(stationPath),
           matchLabel:stationName
         })
       }
 
       if(stationIsContainer){
-        const videos=Array.isArray(station.videos) ? station.videos : []
+        const videos=Array.isArray(station.stations) ? station.stations : []
         for(const videoItem of videos){
           const videoName=videoItem?.name || videoItem?.title || "Vídeo"
           if(itemSearchName(videoItem).includes(normalizedTerm)){
@@ -1219,16 +1231,6 @@ function collectNodeSearchResults(startNode, term, baseStack=[]){
               matchLabel:videoName
             })
           }
-        }
-      }else if(station && station.url){
-        if(itemSearchName(station).includes(normalizedTerm)){
-          results.push({
-            kind:"video",
-            data:station,
-            stack:[...stack],
-            pathLabel:makePathLabel([...pathParts, stationName]),
-            matchLabel:stationName
-          })
         }
       }
     }
@@ -1508,24 +1510,14 @@ function renderBrowser(){
     const isGroup=child.kind==="group"
     const isStation=child.kind==="station"
 
-    const stationContainer =
-      isStation &&
-      (
-        Array.isArray(item?.videos) ||
-        (
-          !(typeof item?.url==="string" && item.url.trim()!=="") &&
-          !Array.isArray(item?.groups) &&
-          !Array.isArray(item?.stations)
-        )
-      )
-
+    const stationContainer=isStationContainer(item)
     const isVideo=child.kind==="video" || (child.kind==="station" && !stationContainer)
     const editorKind=isGroup ? "group" : (stationContainer ? "station" : "video")
 
     const fallback=isGroup ? "📁" : (stationContainer ? "🗂" : (item.import ? "🧩" : "🎬"))
     const groupCount=Array.isArray(item.groups)?item.groups.length:0
     const stationCount=Array.isArray(item.stations)?item.stations.length:0
-    const videoCount=Array.isArray(item.videos)?item.videos.length:0
+    const videoCount=stationContainer && Array.isArray(item.stations)?item.stations.length:0
 
     let meta=""
     if(isGroup){
@@ -1615,24 +1607,35 @@ async function addEntryAtCurrentNode(){
     if(editingKind==="group"){
       editingItemRef.name=name
       editingItemRef.image=image
+
+      if(!Array.isArray(editingItemRef.groups)) editingItemRef.groups=[]
+      delete editingItemRef.stations
+
       if(info) editingItemRef.info=info
       else delete editingItemRef.info
 
     }else if(editingKind==="station"){
       editingItemRef.name=name
       editingItemRef.image=image
+
+      if(!Array.isArray(editingItemRef.stations)) editingItemRef.stations=[]
+      delete editingItemRef.groups
+
       if(info) editingItemRef.info=info
       else delete editingItemRef.info
 
     }else{
       const previousUrl=String(editingItemRef.url||"").trim()
-      const previousReferer=String(editingItemRef.referer||"").trim()
 
       editingItemRef.name=name
       editingItemRef.image=image
       editingItemRef.url=url
-      editingItemRef.import=entryImportToggle.checked
-      editingItemRef.embed=entryEmbedToggle.checked
+
+      if(entryImportToggle.checked) editingItemRef.import=true
+      else delete editingItemRef.import
+
+      if(entryEmbedToggle.checked) editingItemRef.embed=true
+      else delete editingItemRef.embed
 
       if(info) editingItemRef.info=info
       else delete editingItemRef.info
@@ -1640,7 +1643,13 @@ async function addEntryAtCurrentNode(){
       if(referer) editingItemRef.referer=referer
       else delete editingItemRef.referer
 
-      if(previousUrl!==url || previousReferer!==referer){
+      if(needsResolution(url)) editingItemRef.isHost=true
+      else delete editingItemRef.isHost
+
+      delete editingItemRef.groups
+      delete editingItemRef.stations
+
+      if(previousUrl!==url){
         clearLinkStatus(previousUrl)
         clearResolveCache(previousUrl)
         clearLinkStatus(url)
@@ -1660,7 +1669,7 @@ async function addEntryAtCurrentNode(){
     if(isStationContainer(node)){ setDebug("Dentro de una station solo puedes crear vídeos."); return }
     if(!Array.isArray(node.groups)) node.groups=[]
 
-    const newGroup={name, image, groups:[], stations:[]}
+    const newGroup={name, image, groups:[]}
     if(info) newGroup.info=info
 
     node.groups.push(newGroup)
@@ -1669,7 +1678,7 @@ async function addEntryAtCurrentNode(){
     if(isStationContainer(node)){ setDebug("Dentro de una station solo puedes crear vídeos."); return }
     if(!Array.isArray(node.stations)) node.stations=[]
 
-    const newStation={name, image, videos:[]}
+    const newStation={name, image, stations:[]}
     if(info) newStation.info=info
 
     node.stations.push(newStation)
@@ -1677,22 +1686,19 @@ async function addEntryAtCurrentNode(){
   }else{
     if(!url){ setDebug("Pon la URL."); return }
 
-    const newVideo={
-      name,
-      image,
-      url,
-      import:entryImportToggle.checked,
-      embed:entryEmbedToggle.checked
-    }
+    const newVideo={ name, image, url }
 
+    if(entryImportToggle.checked) newVideo.import=true
+    if(entryEmbedToggle.checked) newVideo.embed=true
     if(info) newVideo.info=info
     if(referer) newVideo.referer=referer
+    if(needsResolution(url)) newVideo.isHost=true
 
     if(isStationContainer(node)){
-      if(!Array.isArray(node.videos)) node.videos=[]
+      if(!Array.isArray(node.stations)) node.stations=[]
       clearLinkStatus(url)
       clearResolveCache(url)
-      node.videos.push(newVideo)
+      node.stations.push(newVideo)
     }else{
       setDebug("Los vídeos se crean dentro de una station.")
       return
