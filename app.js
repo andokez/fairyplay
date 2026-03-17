@@ -1294,8 +1294,12 @@ async function openStation(item, options={}) {
   if (sameItem && !options.force) { setDebug("Ese vídeo ya está seleccionado."); return }
 
   currentItemKey = makeItemKey(item)
+
   hideManualResolve()
+  hideYoutubeFrame()
+  destroyPlayers()
   showPlayerEmpty("Cargando o resolviendo vídeo...")
+
   nowPlayingEl.textContent = item?.name || item?.title || "Reproduciendo"
   setCurrentInfo(findNearestInfoForItem(item))
   renderBrowser()
