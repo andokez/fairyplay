@@ -1462,7 +1462,7 @@ function renderBrowser(){
         '<div class="card-body">'+
           (isCurrentItem(item)?'<div class="card-current-dot"></div>':'')+
           statusDot+
-          '<div class="card-type">'+(isGroup ? 'Group' : (stationContainer ? 'Station' : 'Vídeo'))+'</div>'+
+          '<div class="card-type">'+(isGroup ? 'Carpeta' : (stationContainer ? 'Carpeta' : 'Vídeo'))+'</div>'+
           '<div class="card-title">'+escapeHtml(item.name || item.title || "Sin título")+'</div>'+
           '<div class="card-meta">'+escapeHtml(meta)+'</div>'+
         '</div>'
@@ -1494,8 +1494,20 @@ function renderBrowser(){
     const item=child.data
     const isGroup=child.kind==="group"
     const isStation=child.kind==="station"
-    const isVideo=child.kind==="video" || (child.kind==="station" && !isStationContainer(item))
-    const stationContainer=isStation && isStationContainer(item)
+
+    const stationContainer =
+      isStation &&
+      (
+        Array.isArray(item?.videos) ||
+        (
+          !(typeof item?.url==="string" && item.url.trim()!=="") &&
+          !Array.isArray(item?.groups) &&
+          !Array.isArray(item?.stations)
+        )
+      )
+
+    const isVideo=child.kind==="video" || (child.kind==="station" && !stationContainer)
+    const editorKind=isGroup ? "group" : (stationContainer ? "station" : "video")
 
     const fallback=isGroup ? "📁" : (stationContainer ? "🗂" : (item.import ? "🧩" : "🎬"))
     const groupCount=Array.isArray(item.groups)?item.groups.length:0
@@ -1504,9 +1516,9 @@ function renderBrowser(){
 
     let meta=""
     if(isGroup){
-      meta=[groupCount?groupCount+" carpetas":"", stationCount?stationCount+" stations":""].filter(Boolean).join(" · ")
+      meta=[groupCount?groupCount+" carpetas":"", stationCount?stationCount+" estaciones":""].filter(Boolean).join(" · ")
     }else if(stationContainer){
-      meta=videoCount ? videoCount+" vídeos" : "Station"
+      meta=videoCount+" vídeos"
     }else{
       meta=item.import ? "Importa otra lista" : (isEmbedStation(item) ? "Embed / captcha" : (isYoutubeUrl(item.url) ? "YouTube" : ""))
     }
@@ -1521,7 +1533,7 @@ function renderBrowser(){
         (isCurrentItem(item)?'<div class="card-current-dot"></div>':'')+
         statusDot+
         '<div class="card-type">'+
-          (isGroup ? 'Group' : (stationContainer ? 'Station' : (item.import ? 'Lista' : 'Vídeo')))+
+          (isGroup ? 'Carpeta' : (stationContainer ? 'Carpeta' : (item.import ? 'Lista' : 'Vídeo')))+
         '</div>'+
         '<div class="card-title">'+escapeHtml(item.name || item.title || "Sin título")+'</div>'+
         '<div class="card-meta">'+escapeHtml(meta)+'</div>'+
@@ -1556,19 +1568,19 @@ function renderBrowser(){
 
     card.querySelector(".move-left")?.addEventListener("click",(e)=>{
       e.stopPropagation()
-      moveBrowserItem(item, stationContainer ? "station" : child.kind, "left", node)
+      moveBrowserItem(item, child.kind, "left", node)
     })
     card.querySelector(".move-right")?.addEventListener("click",(e)=>{
       e.stopPropagation()
-      moveBrowserItem(item, stationContainer ? "station" : child.kind, "right", node)
+      moveBrowserItem(item, child.kind, "right", node)
     })
     card.querySelector(".edit-item")?.addEventListener("click",(e)=>{
       e.stopPropagation()
-      fillEditorFromItem(item, stationContainer ? "station" : child.kind, node)
+      fillEditorFromItem(item, editorKind, node)
     })
     card.querySelector(".del-item")?.addEventListener("click",(e)=>{
       e.stopPropagation()
-      deleteBrowserItem(item, stationContainer ? "station" : child.kind, node)
+      deleteBrowserItem(item, child.kind, node)
     })
 
     browserGrid.appendChild(card)
