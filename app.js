@@ -675,6 +675,13 @@ function isEmbedStation(item){ const v=item?.embed; return v===true || String(v|
 function isStationContainer(item){
   return !!item && Array.isArray(item.videos)
 }
+function detectEditorKindFromItem(item, fallbackKind="group"){
+  if(isStationContainer(item)) return "station"
+  if(!!item && (typeof item.url==="string" && item.url.trim()!=="")) return "video"
+  return fallbackKind==="video" || fallbackKind==="station" || fallbackKind==="group"
+    ? fallbackKind
+    : "group"
+}
 function isPlayableLeaf(item){
   return !!item && (typeof item.url==="string" && item.url.trim()!=="")
 }
@@ -1032,11 +1039,13 @@ function getNodeChildren(node){
   return [...groups, ...stations]
 }
 function fillEditorFromItem(item, kind, parentNode){
+  const realKind=detectEditorKindFromItem(item, kind)
+
   editingItemRef=item
   editingParentNode=parentNode
-  editingKind=kind
+  editingKind=realKind
 
-  if(kind==="group"){
+  if(realKind==="group"){
     setEntryType("group")
     entryNameInput.value=item?.name||""
     entryImageInput.value=item?.image||item?.img||""
@@ -1045,7 +1054,7 @@ function fillEditorFromItem(item, kind, parentNode){
     entryRefererInput.value=""
     entryImportToggle.checked=false
     entryEmbedToggle.checked=false
-  }else if(kind==="station"){
+  }else if(realKind==="station"){
     setEntryType("station")
     entryNameInput.value=item?.name||item?.title||""
     entryImageInput.value=item?.image||item?.img||""
@@ -1516,7 +1525,7 @@ function renderBrowser(){
 
     let meta=""
     if(isGroup){
-      meta=[groupCount?groupCount+" carpetas":"", stationCount?stationCount+" estaciones":""].filter(Boolean).join(" · ")
+      meta=[groupCount?groupCount+" carpetas":"", stationCount?stationCount+" vídeos":""].filter(Boolean).join(" · ")
     }else if(stationContainer){
       meta=videoCount+" vídeos"
     }else{
