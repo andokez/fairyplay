@@ -85,30 +85,38 @@ let browserSearchTerm=""
 let currentInfoText=""
 let currentInfoExpanded=false
 
-async function checkLocalResolver() {
-  try {
-    const r = await fetch("http://localhost:3000/api/resolve?ping=1", {
-      method: "GET",
-      mode: "cors"
-    });
-    if (r.ok) {
-      console.log("🟢 Resolver local detectado");
-      return true;
-    }
-  } catch (e) {
-    console.log("🔴 Resolver local no detectado");
-  }
-  return false;
+function normalizeBackendUrl(value){
+  const clean=String(value||"").trim()
+  if(!clean) return DEFAULT_BACKEND_URL
+  return clean.replace(/\/+$/,"")
 }
 
-checkLocalResolver().then(active=>{
-  const el=document.getElementById("resolverStatus");
-  if(!el) return;
+async function updateResolverStatus() {
+  const el=document.getElementById("resolverStatus")
+  if(!el) return
 
-  el.textContent = active
-    ? "🟢 Resolver local activo"
-    : "🔴 Resolver local no detectado";
-});
+  const backendUrl=normalizeBackendUrl(RESOLVER_CONFIG.backendUrl)
+
+  if(!RESOLVER_CONFIG.useBackend){
+    el.textContent="⚪ Backend desactivado"
+    return
+  }
+
+  try {
+    const r = await fetch(`${backendUrl}?ping=1`, {
+      method: "GET",
+      mode: "cors"
+    })
+
+    el.textContent = r.ok
+      ? `🟢 Backend activo: ${backendUrl}`
+      : `🔴 Backend sin respuesta: ${backendUrl}`
+  } catch (e) {
+    el.textContent = `🔴 Backend no detectado: ${backendUrl}`
+  }
+}
+
+updateResolverStatus()
 
 const SETTINGS_KEY="player_v14_settings"
 const PROGRESS_KEY="player_v14_progress"
@@ -120,6 +128,13 @@ const DB_NAME="player_v14_db"
 const DB_VERSION=1
 const DB_STORE="kv"
 const DB_LIBRARIES_KEY="libraries"
+
+const DEFAULT_BACKEND_URL="http://localhost:3000/api/resolve"
+const RESOLVER_CONFIG={
+  useBackend:true,
+  backendUrl:DEFAULT_BACKEND_URL,
+  embedResolvers:false
+}
 
 function setDebug(t){
   const text=t||""
@@ -689,8 +704,9 @@ async function embedResolver(url) {
 }
 async function backendResolver(url, manual=false, referer="") {
   try {
+    const backendUrl=normalizeBackendUrl(RESOLVER_CONFIG.backendUrl)
     const refererPart = referer ? `&referer=${encodeURIComponent(referer)}` : ``
-    const fullUrl = `${RESOLVER_CONFIG.backendUrl}?url=${encodeURIComponent(url)}` + (manual ? `&manual=1` : ``) + refererPart
+    const fullUrl = `${backendUrl}?url=${encodeURIComponent(url)}` + (manual ? `&manual=1` : ``) + refererPart
     setDebug(`Llamando backend:\n${fullUrl}`)
     const response = await fetch(fullUrl)
     const data = await response.json()
@@ -1671,7 +1687,13 @@ function setEntryType(type){
   typeVideoBtn.classList.toggle("active-toggle", type==="video")
   videoFields.style.display = type==="video" ? "" : "none"
 }
-function saveResolverConfig(){ localStorage.setItem(RESOLVER_KEY, JSON.stringify({ useBackend: RESOLVER_CONFIG.useBackend, backendUrl: RESOLVER_CONFIG.backendUrl })) }
+function saveResolverConfig(){
+  RESOLVER_CONFIG.backendUrl=normalizeBackendUrl(RESOLVER_CONFIG.backendUrl)
+  localStorage.setItem(RESOLVER_KEY, JSON.stringify({
+    useBackend: RESOLVER_CONFIG.useBackend,
+    backendUrl: RESOLVER_CONFIG.backendUrl
+  }))
+}
 function loadResolverConfig(){ try{ return JSON.parse(localStorage.getItem(RESOLVER_KEY)||"null") }catch{return null} }
 
 on(importFile,"change",async (e)=>{ const file=e.target.files?.[0]; if(!file)return; if(importInFlight){ setDebug("Ya hay una importación en curso.\nEspera a que termine antes de cargar otra lista."); e.target.value=""; return } importInFlight=true; updateImportButtons(); try{ const text=await file.text(); await importFromText(text, "") } finally { importInFlight=false; updateImportButtons(); e.target.value="" } })
@@ -1786,14 +1808,34 @@ document.addEventListener("keydown",(e)=>{ const tag=(document.activeElement&&do
   volumeRange.value=s.volumePercent||100
   syncJumpUi(); applyVolume(); updatePlayLabel(); updateMuteLabel(); updateFullscreenLabel()
   const savedResolver=loadResolverConfig()
-  if(savedResolver){ RESOLVER_CONFIG.useBackend=!!savedResolver.useBackend; RESOLVER_CONFIG.backendUrl=savedResolver.backendUrl || RESOLVER_CONFIG.backendUrl }
+  if(savedResolver){
+    RESOLVER_CONFIG.useBackend=!!savedResolver.useBackend
+    RESOLVER_CONFIG.backendUrl=normalizeBackendUrl(savedResolver.backendUrl || RESOLVER_CONFIG.backendUrl)
+  }else{
+    RESOLVER_CONFIG.backendUrl=normalizeBackendUrl(RESOLVER_CONFIG.backendUrl)
+  }
+
   if(useBackendToggle){
     useBackendToggle.checked = RESOLVER_CONFIG.useBackend
     backendUrlInput.value = RESOLVER_CONFIG.backendUrl
     backendUrlField.style.display = RESOLVER_CONFIG.useBackend ? "block" : "none"
-    useBackendToggle.addEventListener("change", () => { RESOLVER_CONFIG.useBackend = useBackendToggle.checked; backendUrlField.style.display = useBackendToggle.checked ? "block" : "none"; saveResolverConfig() })
-    backendUrlInput.addEventListener("change", () => { RESOLVER_CONFIG.backendUrl = backendUrlInput.value.trim(); saveResolverConfig() })
+
+    useBackendToggle.addEventListener("change", () => {
+      RESOLVER_CONFIG.useBackend = useBackendToggle.checked
+      backendUrlField.style.display = useBackendToggle.checked ? "block" : "none"
+      saveResolverConfig()
+      updateResolverStatus()
+    })
+
+    backendUrlInput.addEventListener("change", () => {
+      RESOLVER_CONFIG.backendUrl = normalizeBackendUrl(backendUrlInput.value)
+      backendUrlInput.value = RESOLVER_CONFIG.backendUrl
+      saveResolverConfig()
+      updateResolverStatus()
+    })
   }
+
+  updateResolverStatus()
   setSidebarCollapsed(!!s.sidebarCollapsed)
   hidePlayer(); hideManualResolve(); setEntryType("group"); syncSearchUi(); nowPlayingEl.textContent="Explorador"; setCurrentInfo(""); debugEl.classList.add("hidden")
   updateImportButtons()
