@@ -85,11 +85,30 @@ let browserSearchTerm=""
 let currentInfoText=""
 let currentInfoExpanded=false
 
-const RESOLVER_CONFIG = {
-  useBackend: true,
-  backendUrl: 'https://fairyplay.onrender.com/api/resolve',
-  embedResolvers: false
+async function checkLocalResolver() {
+  try {
+    const r = await fetch("http://localhost:3000/api/resolve?ping=1", {
+      method: "GET",
+      mode: "cors"
+    });
+    if (r.ok) {
+      console.log("🟢 Resolver local detectado");
+      return true;
+    }
+  } catch (e) {
+    console.log("🔴 Resolver local no detectado");
+  }
+  return false;
 }
+
+checkLocalResolver().then(active=>{
+  const el=document.getElementById("resolverStatus");
+  if(!el) return;
+
+  el.textContent = active
+    ? "🟢 Resolver local activo"
+    : "🔴 Resolver local no detectado";
+});
 
 const SETTINGS_KEY="player_v14_settings"
 const PROGRESS_KEY="player_v14_progress"
@@ -97,7 +116,6 @@ const LINK_STATUS_KEY="player_v14_link_status"
 const RESOLVE_CACHE_KEY="player_v14_resolve_cache"
 const RESOLVER_KEY="resolver_config"
 const LEGACY_LIBS_KEY="player_v14_libraries"
-const AUTO_BACKUP_KEY="player_v14_libraries_backup"
 const DB_NAME="player_v14_db"
 const DB_VERSION=1
 const DB_STORE="kv"
@@ -341,67 +359,35 @@ async function dbRemove(key){
 async function loadLibrariesFromStorage(){
   try{
     const fromDb=await dbGet(DB_LIBRARIES_KEY)
-    if(Array.isArray(fromDb) && fromDb.length){
-      return fromDb
-    }
+    if(Array.isArray(fromDb)) return fromDb
   }catch{}
-
   try{
     const legacy=JSON.parse(localStorage.getItem(LEGACY_LIBS_KEY)||"[]")
     if(Array.isArray(legacy) && legacy.length){
       try{ await dbSet(DB_LIBRARIES_KEY, legacy) }catch{}
-      saveAutoBackupSnapshot(legacy)
       return legacy
     }
   }catch{}
-
-  const backup=loadAutoBackupSnapshot()
-  if(Array.isArray(backup) && backup.length){
-    try{ await dbSet(DB_LIBRARIES_KEY, backup) }catch{}
-    return backup
-  }
-
   return []
 }
 function queueSaveLibraries(){
   if(!storageReady) return Promise.resolve(false)
   const snapshot=structuredClone(libraries)
-
   saveLibrariesPromise=saveLibrariesPromise.then(async ()=>{
     try{
       await dbSet(DB_LIBRARIES_KEY, snapshot)
-      saveAutoBackupSnapshot(snapshot)
       try{ localStorage.removeItem(LEGACY_LIBS_KEY) }catch{}
       return true
     }catch(error){
-      saveAutoBackupSnapshot(snapshot)
       setDebug(`Error guardando bibliotecas.\n${error?.message||error}`)
       return false
     }
   })
-
   return saveLibrariesPromise
 }
 function saveLibrariesSoon(){
   if(saveLibrariesTimer) clearTimeout(saveLibrariesTimer)
   saveLibrariesTimer=setTimeout(()=>{ saveLibrariesTimer=null; queueSaveLibraries() }, 60)
-}
-
-function saveAutoBackupSnapshot(snapshot){
-  try{
-    localStorage.setItem(AUTO_BACKUP_KEY, JSON.stringify(snapshot || []))
-    localStorage.setItem(AUTO_BACKUP_KEY+"_time", String(Date.now()))
-  }catch{}
-}
-
-function loadAutoBackupSnapshot(){
-  try{
-    const raw=localStorage.getItem(AUTO_BACKUP_KEY)||"[]"
-    const parsed=JSON.parse(raw)
-    return Array.isArray(parsed) ? parsed : []
-  }catch{
-    return []
-  }
 }
 
 function safeJsonParse(text){
@@ -478,27 +464,9 @@ function normalizeBrokenJsonLikeText(input){
         continue
       }
 
-      if(ch==="\n"){
-        out+='\\n'
-        i++
-        continue
-      }
-
-      if(ch==="\r"){
-        i++
-        continue
-      }
-
-      if(ch==="\t"){
-        out+='\\t'
-        i++
-        continue
-      }
-
-      const code=ch.charCodeAt(0)
-      if(code<32){
-        out+=' '
-        i++
+      if(ch==="\n" || ch==="\r"){
+        out+='"'
+        inString=false
         continue
       }
 
@@ -577,15 +545,10 @@ function parseLibraryText(text){
     }
   }
 
-  const normalized1=normalizeBrokenJsonLikeText(payload)
-  const normalized2=normalizeBrokenJsonLikeText(normalized1)
-
   push("original", text)
   push("payload", payload)
-  push("normalizado", normalized1)
-  push("normalizado-2", normalized2)
-  push("payload-sin-saltos-raros", payload.replace(/\r\n/g,"\n").replace(/\r/g,"\n"))
-  push("payload-sin-saltos-raros-2", normalizeBrokenJsonLikeText(payload.replace(/\r\n/g,"\n").replace(/\r/g,"\n")))
+  push("normalizado", normalizeBrokenJsonLikeText(payload))
+  push("normalizado-2", normalizeBrokenJsonLikeText(normalizeBrokenJsonLikeText(payload)))
 
   let lastError=""
 
@@ -991,26 +954,11 @@ async function refreshLibraryFromSource(lib){
     if(!parsed.ok){ setDebug(`No se pudo actualizar la biblioteca.\n${parsed.error||"JSON inválido"}`); return false }
     const data=normalizeImportedData(parsed.data)
     if(!data){ setDebug("La actualización no contenía una biblioteca válida."); return false }
-
     const idx=libraries.findIndex(x=>x.id===lib.id)
     if(idx<0) return false
-
-    libraries[idx]={
-      ...libraries[idx],
-      title:tryMakeLibraryTitle(data, libraries[idx].title||"Biblioteca"),
-      author:data.author||libraries[idx].author||"",
-      image:data.image||data.img||libraries[idx].image||"",
-      sourceUrl:libraries[idx].sourceUrl || sourceUrlFromData(data, lib.sourceUrl || ""),
-      data
-    }
-
-    if(currentLibraryId===lib.id){
-      browserStack=[libraries[idx].data]
-      updateNowPlayingFromContext()
-    }
-
-    renderLibraryList()
-    renderBrowser()
+    libraries[idx]={ ...libraries[idx], title:tryMakeLibraryTitle(data, libraries[idx].title||"Biblioteca"), author:data.author||libraries[idx].author||"", image:data.image||data.img||libraries[idx].image||"", data }
+    if(currentLibraryId===lib.id) browserStack=[libraries[idx].data]
+    renderLibraryList(); renderBrowser()
     await persistLibrariesNow()
     setDebug(parsed.error||"Biblioteca actualizada.")
     return true
@@ -1052,22 +1000,7 @@ function renderLibraryList(){
     }
     el.querySelector(".export").addEventListener('click',(e)=>{ e.stopPropagation(); const blob=new Blob([JSON.stringify(lib.data,null,2)],{type:"application/json"}); const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=(lib.title||"biblioteca")+".json"; a.click(); URL.revokeObjectURL(a.href) })
     el.querySelector(".refresh").addEventListener('click',async (e)=>{ e.stopPropagation(); await refreshLibraryFromSource(lib) })
-    el.querySelector(".del").addEventListener('click',async (e)=>{
-      e.stopPropagation()
-
-      const ok=window.confirm(`¿Seguro que quieres borrar la biblioteca "${lib.title || "Sin título"}"?`)
-      if(!ok) return
-
-      libraries=libraries.filter(x=>x.id!==lib.id)
-      if(currentLibraryId===lib.id){
-        currentLibraryId=libraries[0]?.id||null
-        browserStack=[]
-      }
-      renderLibraryList()
-      renderBrowser()
-      await persistLibrariesNow()
-      setDebug("Biblioteca borrada.")
-    })
+    el.querySelector(".del").addEventListener('click',async (e)=>{ e.stopPropagation(); libraries=libraries.filter(x=>x.id!==lib.id); if(currentLibraryId===lib.id){ currentLibraryId=libraries[0]?.id||null; browserStack=[] } renderLibraryList(); renderBrowser(); await persistLibrariesNow(); setDebug("Biblioteca borrada.") })
     libraryList.appendChild(el)
   }
 }
@@ -1163,10 +1096,6 @@ function moveBrowserItem(item, kind, direction, parentNode){
 function deleteBrowserItem(item, kind, parentNode){
   if(!parentNode) return
 
-  const itemName=item?.name || item?.title || "este elemento"
-  const ok=window.confirm(`¿Seguro que quieres borrar "${itemName}"?`)
-  if(!ok) return
-
   let arr=null
   if(kind==="group") arr=parentNode.groups
   else if(kind==="station") arr=parentNode.stations
@@ -1175,12 +1104,10 @@ function deleteBrowserItem(item, kind, parentNode){
   if(!Array.isArray(arr)) return
   const idx=arr.indexOf(item)
   if(idx<0) return
-
   arr.splice(idx,1)
   renderLibraryList()
   renderBrowser()
   saveLibrariesSoon()
-  setDebug(`Elemento borrado: ${itemName}`)
 }
 function getBrowserRootNodes(){ return libraries.map(lib => ({ kind:"library", data:lib })) }
 function clearBrowserSearch(){
@@ -1357,7 +1284,16 @@ async function openStation(item, options={}) {
   }
 
   if (isEmbedStation(item)) {
-    setDebug(`URL recibida al pinchar:\n${originalUrl}\n\nEste enlace está marcado como embed. Primero se intentará la resolución automática por backend. Si falla, podrás abrir el enlace en una pestaña nueva.`)
+    const resolved = await resolveStreamUrlManual(originalUrl, item?.referer || "")
+    if (!resolved) {
+      showManualResolve(originalUrl, item?.name || item?.title || "", item?.referer || "")
+      setDebug(`URL recibida al pinchar:\n${originalUrl}\n\nEste enlace está marcado como embed.\nSe abrió la resolución manual para captcha / continue.`)
+      return
+    }
+    setLinkStatus(originalUrl, "ok")
+    renderBrowser()
+    playUrl(resolved, item?.name || item?.title || "")
+    return
   }
 
   let urlToPlay = originalUrl
@@ -1610,17 +1546,10 @@ function renderBrowser(){
       e.stopPropagation()
       moveBrowserItem(item, stationContainer ? "station" : child.kind, "right", node)
     })
-card.querySelector(".edit-item")?.addEventListener("click",(e)=>{
-  e.stopPropagation()
-
-  let kind = child.kind
-
-  if(stationContainer && child.kind!=="group" && child.kind!=="station"){
-    kind="video"
-  }
-
-  fillEditorFromItem(item, kind, node)
-})
+    card.querySelector(".edit-item")?.addEventListener("click",(e)=>{
+      e.stopPropagation()
+      fillEditorFromItem(item, stationContainer ? "station" : child.kind, node)
+    })
     card.querySelector(".del-item")?.addEventListener("click",(e)=>{
       e.stopPropagation()
       deleteBrowserItem(item, stationContainer ? "station" : child.kind, node)
@@ -1748,19 +1677,7 @@ function loadResolverConfig(){ try{ return JSON.parse(localStorage.getItem(RESOL
 on(importFile,"change",async (e)=>{ const file=e.target.files?.[0]; if(!file)return; if(importInFlight){ setDebug("Ya hay una importación en curso.\nEspera a que termine antes de cargar otra lista."); e.target.value=""; return } importInFlight=true; updateImportButtons(); try{ const text=await file.text(); await importFromText(text, "") } finally { importInFlight=false; updateImportButtons(); e.target.value="" } })
 on(importUrlBtn,"click",async ()=>{ const url=importUrlInput.value.trim(); if(!url) return; await importFromUrl(url) })
 on(exportCurrentBtn,"click",()=>{ const lib=currentLibrary(); if(!lib){setDebug("No hay biblioteca actual."); return}; const blob=new Blob([JSON.stringify(lib.data,null,2)],{type:"application/json"}); const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=(lib.title||"biblioteca")+".json"; a.click(); URL.revokeObjectURL(a.href) })
-on(clearLibrariesBtn,"click",async ()=>{
-  const ok=window.confirm("¿Seguro que quieres borrar todas las bibliotecas?")
-  if(!ok) return
-
-  libraries=[]
-  currentLibraryId=null
-  browserStack=[]
-  renderLibraryList()
-  renderBrowser()
-  await dbRemove(DB_LIBRARIES_KEY)
-  saveAutoBackupSnapshot([])
-  setDebug("Bibliotecas borradas.")
-})
+on(clearLibrariesBtn,"click",async ()=>{ libraries=[]; currentLibraryId=null; browserStack=[]; renderLibraryList(); renderBrowser(); await dbRemove(DB_LIBRARIES_KEY); setDebug("Bibliotecas borradas.") })
 on(backFolderBtn,"click",()=>{
   if(browserStack.length>1){
     browserStack.pop()
@@ -1796,19 +1713,23 @@ on(typeGroupBtn,"click",()=>setEntryType("group"))
 on(typeStationBtn,"click",()=>setEntryType("station"))
 on(typeVideoBtn,"click",()=>setEntryType("video"))
 on(addEntryBtn,"click",()=>{ addEntryAtCurrentNode() })
-on(manualResolveBtn,"click",()=>{
+on(manualResolveBtn,"click",async ()=>{
   if(!pendingManualResolveUrl){
-    setDebug("No hay URL pendiente para abrir.")
+    setDebug("No hay URL pendiente para resolución manual.")
     return
   }
 
-  const win=window.open(pendingManualResolveUrl, "_blank", "noopener,noreferrer")
-  if(!win){
-    setDebug("El navegador bloqueó la ventana emergente. Permite popups para este sitio e inténtalo otra vez.")
+  const resolved = await resolveStreamUrlManual(
+    pendingManualResolveUrl,
+    pendingManualResolveReferer || ""
+  )
+
+  if(!resolved){
+    setDebug("No se pudo resolver manualmente.\nHaz el captcha y pulsa Proceed to video en la ventana abierta.")
     return
   }
 
-  setDebug("Se abrió el enlace en una pestaña nueva.")
+  playUrl(resolved, pendingManualResolveTitle || "Reproduciendo")
 })
 on(infoToggleBtn,"click",()=>toggleCurrentInfo())
 on(debugToggleBtn,"click",()=>{

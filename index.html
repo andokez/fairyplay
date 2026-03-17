@@ -95,7 +95,21 @@
         <p class="hint">Rueda del ratón sobre <b>+tiempo</b> para cambiar el salto.</p>
         <p class="hint">Click central en lateral izquierdo/derecho del vídeo para atrás/adelante.</p>
         </section><!-- AÑADIR DESPUÉS DE LA SECCIÓN DE OPCIONES -->
-        	  
+        <section class="panel compact">
+          <h2>Resolvedor de streams</h2>
+		  <div id="resolverStatus" style="font-size:12px;margin-bottom:6px;"></div>
+          <p class="hint">Soporta: vidmoly, stre4mpay, voe, streamtape, doodstream, mixdrop</p>
+          <label class="check">
+            <input id="useBackendToggle" type="checkbox" />
+            <span>Usar backend (más fiable)</span>
+          </label>
+          <div id="backendUrlField" style="display:none; margin-top:8px;">
+            <label class="label">URL del backend</label>
+            <input id="backendUrlInput" class="input" type="text" placeholder="https://tuservidor.com/resolve" />
+          </div>
+          <p class="hint" style="margin-top:8px;">⚠ El resolvedor embebido puede no funcionar en todos los sitios debido a CORS.</p>
+        </section>
+	  
     </aside>
 
     <main class="main">
@@ -147,8 +161,8 @@
         <pre id="debug" class="debug hidden"></pre>
 
         <div id="manualResolveBox" class="manual-resolve hidden">
-          <div class="hint">Este host necesita intervención manual. En la versión web pública no se puede abrir una ventana del navegador del servidor, así que este botón abrirá el enlace en una pestaña nueva.</div>
-          <button id="manualResolveBtn" class="btn primary">Abrir enlace en pestaña nueva</button>
+          <div class="hint">Este host necesita intervención manual para captcha / continue.</div>
+          <button id="manualResolveBtn" class="btn primary">Resolver captcha en ventana</button>
         </div>
       </section>
 
