@@ -960,24 +960,109 @@ function getDrmConfigFromItem(item){
       if(!k || !drm[k]) continue
       const kidHex=normalizeDrmHex(k)
       const keyHex=normalizeDrmHex(drm[k])
-      const kidB64=hexToBase64Url(kidHex)
-      const keyB64=hexToBase64Url(keyHex)
-      if(!kidB64 || !keyB64) continue
-      keys[kidB64]=keyB64
+      if(!kidHex || !keyHex) continue
+      keys[kidHex]=keyHex
     }
     if(Object.keys(keys).length) return keys
   }
 
   const kidHex=normalizeDrmHex(item?.kid||"")
   const keyHex=normalizeDrmHex(item?.key||"")
-  const kidB64=hexToBase64Url(kidHex)
-  const keyB64=hexToBase64Url(keyHex)
 
-  if(kidB64 && keyB64){
-    return { [kidB64]: keyB64 }
+  if(kidHex && keyHex){
+    return { [kidHex]: keyHex }
   }
 
   return null
+}
+
+function hexToBytes(hex){
+  const clean=String(hex||"").trim().replace(/-/g,"").toLowerCase()
+  if(!clean || clean.length % 2 !== 0) return new Uint8Array()
+  const out=new Uint8Array(clean.length/2)
+  for(let i=0;i<clean.length;i+=2){
+    out[i/2]=parseInt(clean.slice(i,i+2),16)
+  }
+  return out
+}
+
+function bytesToBase64Url(bytes){
+  let binary=""
+  for(const b of bytes) binary+=String.fromCharCode(b)
+  return btoa(binary).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"")
+}
+
+function hexToBase64Url(hex){
+  return bytesToBase64Url(hexToBytes(hex))
+}
+
+function utf8ToUint8(str){
+  return new TextEncoder().encode(String(str||""))
+}
+
+function buildClearKeyLicenseUint8(drmHexMap){
+  const keys=Object.entries(drmHexMap||{})
+    .filter(([kid,key])=>kid && key)
+    .map(([kid,key])=>({
+      kty:"oct",
+      kid:hexToBase64Url(kid),
+      k:hexToBase64Url(key)
+    }))
+
+  return utf8ToUint8(JSON.stringify({
+    keys,
+    type:"temporary"
+  }))
+}
+
+let nativeClearKeyHandlerBound=false
+let nativeClearKeyInstalled=false
+
+async function installNativeClearKey(videoEl, drmHexMap, pushDashDebug){
+  if(!videoEl || !drmHexMap || !Object.keys(drmHexMap).length) return
+
+  const access=await navigator.requestMediaKeySystemAccess("org.w3.clearkey", [{
+    initDataTypes:["cenc","keyids"],
+    audioCapabilities:[
+      { contentType:'audio/mp4; codecs="mp4a.40.2"' }
+    ],
+    videoCapabilities:[
+      { contentType:'video/mp4; codecs="avc1.42E01E"' },
+      { contentType:'video/mp4; codecs="avc1.4D401E"' },
+      { contentType:'video/mp4; codecs="avc1.64001F"' }
+    ]
+  }])
+
+  const mediaKeys=await access.createMediaKeys()
+  await videoEl.setMediaKeys(mediaKeys)
+
+  nativeClearKeyInstalled=true
+
+  if(nativeClearKeyHandlerBound) return
+  nativeClearKeyHandlerBound=true
+
+  videoEl.addEventListener("encrypted", async (event)=>{
+    try{
+      if(!nativeClearKeyInstalled) return
+
+      const mediaKeysNow=videoEl.mediaKeys
+      if(!mediaKeysNow) return
+
+      const session=mediaKeysNow.createSession("temporary")
+      const license=buildClearKeyLicenseUint8(drmHexMap)
+
+      session.addEventListener("message", async ()=>{
+        await session.update(license)
+        if(pushDashDebug) pushDashDebug("NATIVE CLEARKEY: session.update() OK")
+      }, { once:true })
+
+      await session.generateRequest(event.initDataType, event.initData)
+      if(pushDashDebug) pushDashDebug(`NATIVE CLEARKEY: generateRequest(${event.initDataType}) OK`)
+    }catch(err){
+      if(pushDashDebug) pushDashDebug(`NATIVE CLEARKEY ERROR:\n${err?.message || err}`)
+      try{ console.error(err) }catch{}
+    }
+  })
 }
 
 function showControlsTemporarily(){ if(!playerWrap) return; playerWrap.classList.remove('controls-hidden'); if(controlsHideTimer) clearTimeout(controlsHideTimer); if(video.classList.contains('hidden') || video.paused) return; controlsHideTimer=setTimeout(()=>playerWrap.classList.add('controls-hidden'), 2200) }
@@ -1156,20 +1241,15 @@ async function playUrl(url,title,item=null){
       dashPlayer.updateSettings({
         streaming: {
           protection: {
-            ignoreEmeEncryptedEvent: !!drm
+            ignoreEmeEncryptedEvent: true
           }
         }
       })
 
       if(drm){
-        dashPlayer.setProtectionData({
-          "org.w3.clearkey": {
-            clearkeys: drm
-          }
-        })
-        pushDashDebug(`DASH ClearKey activado (${Object.keys(drm).length} keys)`)
+        await installNativeClearKey(video, drm, pushDashDebug)
+        pushDashDebug(`NATIVE ClearKey activado (${Object.keys(drm).length} keys)`)
         pushDashDebug(`DASH protección: ignoreEmeEncryptedEvent=ON`)
-        pushDashDebug(`DASH ClearKey formato dash.js:\n${JSON.stringify(drm, null, 2)}`)
       }
 
       video.addEventListener("error", ()=>{
