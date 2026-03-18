@@ -1194,15 +1194,27 @@ async function playUrl(url,title,item=null){
         })
       }
 
+      const kickDashPlayback = async (reason="")=>{
+        try{
+          video.muted = true
+          applyVolume()
+          await video.play()
+          if(reason) pushDashDebug(`DASH autoplay kick: ${reason}`)
+        }catch{}
+      }
+
       if(dashEvents.STREAM_INITIALIZED){
         dashPlayer.on(dashEvents.STREAM_INITIALIZED, ()=>{
           pushDashDebug(`STREAM INITIALIZED`)
+          setTimeout(()=>{ kickDashPlayback("stream_initialized") }, 0)
+          setTimeout(()=>{ kickDashPlayback("stream_initialized+250ms") }, 250)
         })
       }
 
       if(dashEvents.PLAYBACK_STARTED){
         dashPlayer.on(dashEvents.PLAYBACK_STARTED, ()=>{
           pushDashDebug(`PLAYBACK STARTED`)
+          setTimeout(()=>{ kickDashPlayback("playback_started") }, 0)
         })
       }
 
@@ -1309,15 +1321,19 @@ async function playUrl(url,title,item=null){
     if(autoPlayOk){
       const unlockAudio = async ()=>{
         try{
-          video.muted = false
           if(audioCtx && audioCtx.state === "suspended"){
             await audioCtx.resume()
           }
+          video.muted = false
           applyVolume()
+          await video.play().catch(()=>{})
         }catch{}
       }
 
       video.addEventListener("click", unlockAudio, { once:true })
+      clickLayer?.addEventListener("click", unlockAudio, { once:true })
+      playPauseBtn?.addEventListener("click", unlockAudio, { once:true })
+      muteBtn?.addEventListener("click", unlockAudio, { once:true })
       document.addEventListener("keydown", unlockAudio, { once:true })
     }
 
@@ -1344,6 +1360,20 @@ function playYoutubeUrl(url,title){
 function jumpBy(s){ if(video.classList.contains("hidden")) return; video.currentTime=Math.max(0,Math.min(video.duration||Infinity,video.currentTime+s)) }
 async function togglePlay(){
   if(video.classList.contains("hidden")) return
+
+  // Si ya está reproduciendo pero en mute por autoplay,
+  // el primer toque debe desbloquear audio, no pausar.
+  if(!video.paused && video.muted){
+    try{
+      if(audioCtx && audioCtx.state === "suspended"){
+        await audioCtx.resume()
+      }
+      video.muted = false
+      applyVolume()
+      await video.play().catch(()=>{})
+    }catch{}
+    return
+  }
 
   if(video.paused){
     try{
