@@ -1192,6 +1192,9 @@ async function playUrl(url,title,item=null){
 
       const kickDashPlayback = (reason="")=>{
         try{
+          if(audioCtx && audioCtx.state === "suspended"){
+            audioCtx.resume().catch(()=>{})
+          }
           video.play().catch(()=>{})
           if(reason) pushDashDebug(`DASH autoplay kick: ${reason}`)
         }catch{}
@@ -1200,17 +1203,29 @@ async function playUrl(url,title,item=null){
       if(dashEvents.STREAM_INITIALIZED){
         dashPlayer.on(dashEvents.STREAM_INITIALIZED, ()=>{
           pushDashDebug(`STREAM INITIALIZED`)
-          setTimeout(kickDashPlayback, 0)
-          setTimeout(kickDashPlayback, 250)
-          setTimeout(kickDashPlayback, 700)
+          setTimeout(()=>kickDashPlayback("stream_initialized"), 0)
+          setTimeout(()=>kickDashPlayback("stream_initialized+300ms"), 300)
+          setTimeout(()=>kickDashPlayback("stream_initialized+900ms"), 900)
         })
       }
 
       if(dashEvents.PLAYBACK_STARTED){
         dashPlayer.on(dashEvents.PLAYBACK_STARTED, ()=>{
           pushDashDebug(`PLAYBACK STARTED`)
-          setTimeout(kickDashPlayback, 0)
+          setTimeout(()=>kickDashPlayback("playback_started"), 0)
         })
+      }
+
+      video.oncanplay = ()=>{
+        if(dashPlayer) kickDashPlayback("canplay")
+      }
+
+      video.onwaiting = ()=>{
+        if(dashPlayer) kickDashPlayback("waiting")
+      }
+
+      video.onstalled = ()=>{
+        if(dashPlayer) kickDashPlayback("stalled")
       }
 
       if(dashEvents.FRAGMENT_LOADING_STARTED){
@@ -1265,7 +1280,7 @@ async function playUrl(url,title,item=null){
         pushDashDebug(`VIDEO ERROR:\ncode=${mediaError.code}\nmessage=${mediaError.message||"sin mensaje"}`)
       }, { once:false })
 
-      dashPlayer.initialize(video, playbackUrl, true)
+      dashPlayer.initialize(video, playbackUrl, false)
     }
     else if(type==="hls"){
       const hlsHeaders=getProxyHeadersFromItem(item, { includeImplicit:true })
@@ -1308,11 +1323,13 @@ async function playUrl(url,title,item=null){
     video.muted = false
     applyVolume()
 
-    video.play().catch((err)=>{
-      try{
-        setDebug((debugEl?.textContent ? debugEl.textContent + "\n" : "") + `PLAY ERROR:\n${err?.message || err}`)
-      }catch{}
-    })
+    if(type!=="dash"){
+      video.play().catch((err)=>{
+        try{
+          setDebug((debugEl?.textContent ? debugEl.textContent + "\n" : "") + `PLAY ERROR:\n${err?.message || err}`)
+        }catch{}
+      })
+    }
 
     const remembered=rememberToggle.checked?getProgress(url):0
     if(remembered>3){
