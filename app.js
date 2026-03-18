@@ -992,10 +992,6 @@ function bytesToBase64Url(bytes){
   return btoa(binary).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"")
 }
 
-function hexToBase64Url(hex){
-  return bytesToBase64Url(hexToBytes(hex))
-}
-
 function utf8ToUint8(str){
   return new TextEncoder().encode(String(str||""))
 }
@@ -1194,11 +1190,9 @@ async function playUrl(url,title,item=null){
         })
       }
 
-      const kickDashPlayback = async (reason="")=>{
+      const kickDashPlayback = (reason="")=>{
         try{
-          video.muted = true
-          applyVolume()
-          await video.play()
+          video.play().catch(()=>{})
           if(reason) pushDashDebug(`DASH autoplay kick: ${reason}`)
         }catch{}
       }
@@ -1206,15 +1200,16 @@ async function playUrl(url,title,item=null){
       if(dashEvents.STREAM_INITIALIZED){
         dashPlayer.on(dashEvents.STREAM_INITIALIZED, ()=>{
           pushDashDebug(`STREAM INITIALIZED`)
-          setTimeout(()=>{ kickDashPlayback("stream_initialized") }, 0)
-          setTimeout(()=>{ kickDashPlayback("stream_initialized+250ms") }, 250)
+          setTimeout(kickDashPlayback, 0)
+          setTimeout(kickDashPlayback, 250)
+          setTimeout(kickDashPlayback, 700)
         })
       }
 
       if(dashEvents.PLAYBACK_STARTED){
         dashPlayer.on(dashEvents.PLAYBACK_STARTED, ()=>{
           pushDashDebug(`PLAYBACK STARTED`)
-          setTimeout(()=>{ kickDashPlayback("playback_started") }, 0)
+          setTimeout(kickDashPlayback, 0)
         })
       }
 
@@ -1304,38 +1299,20 @@ async function playUrl(url,title,item=null){
 
     await ensureAudioBoost()
 
-    let autoPlayOk = false
-
     try{
-      video.muted = true
-      applyVolume()
-      await video.play()
-      autoPlayOk = true
-      setDebug("Autoplay arrancado en silencio. Pulsa play para activar audio si hace falta.")
-    }catch(err){
+      if(audioCtx && audioCtx.state === "suspended"){
+        await audioCtx.resume()
+      }
+    }catch{}
+
+    video.muted = false
+    applyVolume()
+
+    video.play().catch((err)=>{
       try{
         setDebug((debugEl?.textContent ? debugEl.textContent + "\n" : "") + `PLAY ERROR:\n${err?.message || err}`)
       }catch{}
-    }
-
-    if(autoPlayOk){
-      const unlockAudio = async ()=>{
-        try{
-          if(audioCtx && audioCtx.state === "suspended"){
-            await audioCtx.resume()
-          }
-          video.muted = false
-          applyVolume()
-          await video.play().catch(()=>{})
-        }catch{}
-      }
-
-      video.addEventListener("click", unlockAudio, { once:true })
-      clickLayer?.addEventListener("click", unlockAudio, { once:true })
-      playPauseBtn?.addEventListener("click", unlockAudio, { once:true })
-      muteBtn?.addEventListener("click", unlockAudio, { once:true })
-      document.addEventListener("keydown", unlockAudio, { once:true })
-    }
+    })
 
     const remembered=rememberToggle.checked?getProgress(url):0
     if(remembered>3){
