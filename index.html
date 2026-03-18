@@ -60,6 +60,18 @@
 
     <label class="label">Referer</label>
     <input id="entryRefererInput" class="input" type="text" placeholder="https://host.com" />
+	
+	<label class="label">User-Agent (opcional)</label>
+<input id="entryUserAgentInput" class="input" type="text"
+placeholder="Mozilla/5.0 ..." />
+
+<label class="label">Headers extra (opcional)</label>
+<textarea id="entryHeadersInput" class="input textarea" rows="5" placeholder="web-token: eyJ...&#10;origin: https://www.web.com&#10;x-algo: valor"></textarea>
+<p class="hint">Una línea por header, en formato <b>nombre:valor</b>. Ejemplo: <b>web-token: TU_TOKEN</b></p>
+
+<label class="label">DRM ClearKey (opcional)</label>
+<textarea id="entryDrmKeysInput" class="input textarea" rows="4" placeholder="kid1:key1&#10;kid2:key2&#10;kid3:key3"></textarea>
+<p class="hint">Una línea por clave, en formato <b>kid:key</b></p>
 
     <label class="check">
       <input id="entryImportToggle" type="checkbox" />
@@ -94,7 +106,7 @@
         </label>
         <p class="hint">Rueda del ratón sobre <b>+tiempo</b> para cambiar el salto.</p>
         <p class="hint">Click central en lateral izquierdo/derecho del vídeo para atrás/adelante.</p>
-        </section><!-- AÑADIR DESPUÉS DE LA SECCIÓN DE OPCIONES -->
+        </section>
         <section class="panel compact">
           <h2>Resolvedor de streams</h2>
 		  <div id="resolverStatus" style="font-size:12px;margin-bottom:6px;"></div>

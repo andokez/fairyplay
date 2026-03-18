@@ -23,6 +23,9 @@ const entryImageInput=$("entryImageInput")
 const entryInfoInput=$("entryInfoInput")
 const entryUrlInput=$("entryUrlInput")
 const entryRefererInput=$("entryRefererInput")
+const entryUserAgentInput=$("entryUserAgentInput")
+const entryHeadersInput=$("entryHeadersInput")
+const entryDrmKeysInput=$("entryDrmKeysInput")
 const entryImportToggle=$("entryImportToggle")
 const entryEmbedToggle=$("entryEmbedToggle")
 const addEntryBtn=$("addEntryBtn")
@@ -84,6 +87,7 @@ let editingKind=""
 let browserSearchTerm=""
 let currentInfoText=""
 let currentInfoExpanded=false
+let debugExpanded=false
 
 function normalizeBackendUrl(value){
   const clean=String(value||"").trim()
@@ -136,10 +140,22 @@ const RESOLVER_CONFIG={
   embedResolvers:false
 }
 
+function renderDebugVisibility(){
+  if(!debugEl) return
+  const hasText=!!debugEl.textContent.trim()
+  debugEl.classList.toggle("hidden", !hasText || !debugExpanded)
+}
+
 function setDebug(t){
   const text=t||""
   debugEl.textContent=text
-  debugEl.classList.toggle("hidden", !text)
+  renderDebugVisibility()
+}
+
+function toggleDebugPanel(){
+  if(!debugEl?.textContent.trim()) return
+  debugExpanded=!debugExpanded
+  renderDebugVisibility()
 }
 
 function formatInfoText(value){
@@ -594,6 +610,13 @@ function makeItemKey(item){
   return [item.import ? "import" : "station", item.name || item.title || "", item.url || "", isEmbedStation(item) ? "embed" : "", isYoutubeUrl(item?.url || "") ? "youtube" : ""].join("|")
 }
 function isCurrentItem(item){ return !!currentItemKey && makeItemKey(item)===currentItemKey }
+
+function clearCurrentSelection(render=true){
+  if(!currentItemKey) return
+  currentItemKey=""
+  if(render) renderBrowser()
+}
+
 function getCurrentNodeStations(){
   const node=getCurrentNode()
   if(!node) return []
@@ -776,6 +799,51 @@ async function resolveStreamUrlManual(originalUrl, referer="") {
   return await backendResolver(originalUrl, true, referer)
 }
 
+function getProxyHeadersFromItem(item, options={}){
+  const headers={}
+  const includeImplicit = !!options.includeImplicit
+
+  if(item?.headers && typeof item.headers==="object"){
+    for(const [k,v] of Object.entries(item.headers)){
+      const key=String(k||"").trim()
+      const value=String(v||"").trim()
+      if(key && value) headers[key]=value
+    }
+  }
+
+  if(includeImplicit){
+    const referer=String(item?.referer||"").trim()
+    if(referer && !headers.referer && !headers.Referer){
+      headers.referer=referer
+    }
+
+    const userAgent=String(item?.userAgent||"").trim()
+    if(userAgent && !headers["user-agent"] && !headers["User-Agent"]){
+      headers["user-agent"]=userAgent
+    }
+  }
+
+  return headers
+}
+
+function buildBackendMediaProxyUrl(url, item=null, extraHeaders={}){
+  const backendBase = normalizeBackendUrl(RESOLVER_CONFIG.backendUrl).replace(/\/api\/resolve$/i, '/api/proxy')
+  const u = new URL(backendBase)
+  u.searchParams.set('url', url)
+
+  const baseHeaders=getProxyHeadersFromItem(item, { includeImplicit:true })
+  const mergedHeaders={ ...baseHeaders, ...(extraHeaders||{}) }
+
+  for(const [k,v] of Object.entries(mergedHeaders)){
+    const key=String(k||"").trim()
+    const value=String(v||"").trim()
+    if(!key || !value) continue
+    u.searchParams.set(`h_${key}`, value)
+  }
+
+  return u.toString()
+}
+
 function normalizeDropboxUrl(url){
   if(!url) return url
   if(url.includes("dropbox.com")){
@@ -787,6 +855,7 @@ function normalizeDropboxUrl(url){
 }
 
 function destroyPlayers(){ try{if(dashPlayer){dashPlayer.reset();dashPlayer=null}}catch{}; try{if(hlsPlayer){hlsPlayer.destroy();hlsPlayer=null}}catch{}; video.pause(); video.removeAttribute("src"); video.load() }
+
 function inferType(url){
   const clean=(url||"").split("#")[0].split("?")[0].toLowerCase()
   if(clean.endsWith(".mpd")) return "dash"
@@ -794,19 +863,198 @@ function inferType(url){
   if(clean.endsWith(".ts")) return "file"
   return "file"
 }
+
+function normalizeDrmHex(value){
+  return String(value||"").trim().replace(/-/g,"").toLowerCase()
+}
+
+function parseHeadersText(text){
+  const lines=String(text||"").split(/\r?\n/)
+  const headers={}
+
+  for(const rawLine of lines){
+    const line=String(rawLine||"").trim()
+    if(!line) continue
+
+    const sep=line.indexOf(":")
+    if(sep<0) continue
+
+    const key=line.slice(0, sep).trim()
+    const value=line.slice(sep + 1).trim()
+
+    if(!key || !value) continue
+    headers[key]=value
+  }
+
+  return Object.keys(headers).length ? headers : null
+}
+
+function headersToText(item){
+  const headers=(item?.headers && typeof item.headers==="object") ? item.headers : null
+  if(!headers) return ""
+
+  return Object.entries(headers)
+    .filter(([key,value])=>key && value)
+    .map(([key,value])=>`${key}:${value}`)
+    .join("\n")
+}
+
+function parseDrmKeysText(text){
+  const lines=String(text||"").split(/\r?\n/)
+  const keys={}
+
+  for(const rawLine of lines){
+    const line=rawLine.trim()
+    if(!line) continue
+
+    const sep=line.indexOf(":")
+    if(sep<0) continue
+
+    const kid=normalizeDrmHex(line.slice(0, sep))
+    const key=normalizeDrmHex(line.slice(sep + 1))
+
+    if(!kid || !key) continue
+    keys[kid]=key
+  }
+
+  return Object.keys(keys).length ? keys : null
+}
+
+function drmKeysToText(item){
+  const drm=item?.drm?.clearkey
+  if(drm && typeof drm==="object"){
+    return Object.entries(drm)
+      .filter(([kid,key])=>kid && key)
+      .map(([kid,key])=>`${kid}:${key}`)
+      .join("\n")
+  }
+
+  const kid=normalizeDrmHex(item?.kid||"")
+  const key=normalizeDrmHex(item?.key||"")
+  return (kid && key) ? `${kid}:${key}` : ""
+}
+
+function getDrmConfigFromItem(item){
+  const drm=item?.drm?.clearkey
+
+  if(drm && typeof drm==="object"){
+    const keys={}
+    for(const k in drm){
+      if(!k || !drm[k]) continue
+      keys[normalizeDrmHex(k)]=normalizeDrmHex(drm[k])
+    }
+    if(Object.keys(keys).length) return keys
+  }
+
+  const kid=normalizeDrmHex(item?.kid||"")
+  const key=normalizeDrmHex(item?.key||"")
+
+  if(kid && key){
+    return { [kid]: key }
+  }
+
+  return null
+}
+
 function showControlsTemporarily(){ if(!playerWrap) return; playerWrap.classList.remove('controls-hidden'); if(controlsHideTimer) clearTimeout(controlsHideTimer); if(video.classList.contains('hidden') || video.paused) return; controlsHideTimer=setTimeout(()=>playerWrap.classList.add('controls-hidden'), 2200) }
 function keepControlsVisible(){ if(!playerWrap) return; if(controlsHideTimer) clearTimeout(controlsHideTimer); playerWrap.classList.remove('controls-hidden') }
-async function playUrl(url,title){
-  hideYoutubeFrame(); destroyPlayers(); showPlayerLoaded(); keepControlsVisible(); playerSection.scrollIntoView({behavior:"smooth", block:"start"}); nowPlayingEl.textContent=title||"Reproduciendo"; currentPlayableTitle=title||"Reproduciendo"
+
+async function playUrl(url,title,item=null){
+  hideYoutubeFrame()
+  destroyPlayers()
+  showPlayerLoaded()
+  keepControlsVisible()
+  playerSection.scrollIntoView({behavior:"smooth", block:"start"})
+  nowPlayingEl.textContent=title||"Reproduciendo"
+  currentPlayableTitle=title||"Reproduciendo"
+
   try{
     const type=inferType(url)
-    if(type==="dash"){ dashPlayer=dashjs.MediaPlayer().create(); dashPlayer.initialize(video,url,true) }
-    else if(type==="hls"){ if(window.Hls&&Hls.isSupported()){ hlsPlayer=new Hls(); hlsPlayer.loadSource(url); hlsPlayer.attachMedia(video) } else { video.src=url } }
-    else { video.src=url }
-    await ensureAudioBoost(); applyVolume(); video.play().catch(()=>{})
+    const drm=getDrmConfigFromItem(item)
+    let playbackUrl=url
+
+    const explicitProxyHeaders=getProxyHeadersFromItem(item, { includeImplicit:false })
+
+    const shouldProxyDash =
+      type==="dash" &&
+      RESOLVER_CONFIG.useBackend &&
+      (
+        !!drm ||
+        Object.keys(explicitProxyHeaders).length>0
+      )
+
+    if(shouldProxyDash){
+      playbackUrl=buildBackendMediaProxyUrl(url, item)
+      setDebug(`Reproduciendo MPD vía proxy backend:\n${playbackUrl}`)
+    }else{
+      setDebug(`Reproduciendo directo:\n${url}`)
+    }
+
+    if(type==="dash"){
+      dashPlayer=dashjs.MediaPlayer().create()
+
+      const dashProxyHeaders=getProxyHeadersFromItem(item, { includeImplicit:true })
+
+      dashPlayer.extend("RequestModifier", function(){
+        return {
+          modifyRequestURL: function(requestUrl){
+            const raw=String(requestUrl||"").trim()
+            if(!raw) return raw
+
+            if(/^https?:\/\/localhost(?::\d+)?\/api\/proxy\b/i.test(raw)) return raw
+            if(/^https?:\/\/127\.0\.0\.1(?::\d+)?\/api\/proxy\b/i.test(raw)) return raw
+            if(/^blob:/i.test(raw)) return raw
+            if(/^data:/i.test(raw)) return raw
+
+            return buildBackendMediaProxyUrl(raw, item, dashProxyHeaders)
+          },
+          modifyRequestHeader: function(xhr){
+            return xhr
+          }
+        }
+      }, true)
+
+      if(drm){
+        dashPlayer.setProtectionData({
+          "org.w3.clearkey":{
+            clearkeys: drm
+          }
+        })
+        setDebug(`DASH ClearKey activado (${Object.keys(drm).length} keys)`)
+      }
+
+      dashPlayer.initialize(video, playbackUrl, true)
+    }
+    else if(type==="hls"){
+      if(window.Hls&&Hls.isSupported()){
+        hlsPlayer=new Hls()
+        hlsPlayer.loadSource(playbackUrl)
+        hlsPlayer.attachMedia(video)
+      } else {
+        video.src=playbackUrl
+      }
+    }
+    else {
+      video.src=playbackUrl
+    }
+
+    await ensureAudioBoost()
+    applyVolume()
+
+    if(type!=="dash"){
+      video.play().catch(()=>{})
+    }
+
     const remembered=rememberToggle.checked?getProgress(url):0
-    if(remembered>3){ video.addEventListener("loadedmetadata",function seekOnce(){ try{video.currentTime=remembered}catch{} video.removeEventListener("loadedmetadata",seekOnce) }) }
-  }catch(e){ setDebug(String(e)) }
+    if(remembered>3){
+      video.addEventListener("loadedmetadata",function seekOnce(){
+        try{video.currentTime=remembered}catch{}
+        video.removeEventListener("loadedmetadata",seekOnce)
+      })
+    }
+  }catch(e){
+    setDebug(String(e))
+  }
 }
 function playYoutubeUrl(url,title){
   const embedUrl=getYoutubeEmbedUrl(url)
@@ -1084,6 +1332,10 @@ function fillEditorFromItem(item, kind, parentNode){
     entryImageInput.value=item?.image||item?.img||""
     entryInfoInput.value=item?.info||""
     entryUrlInput.value=item?.url||""
+    entryRefererInput.value=item?.referer||""
+    entryUserAgentInput.value=item?.userAgent||item?.headers?.["user-agent"]||item?.headers?.["User-Agent"]||""
+    entryHeadersInput.value=headersToText(item)
+    entryDrmKeysInput.value=drmKeysToText(item)
     entryImportToggle.checked=!!item?.import
     entryEmbedToggle.checked=isEmbedStation(item)
   }
@@ -1101,6 +1353,9 @@ function clearEditorForm(){
   entryInfoInput.value=""
   entryUrlInput.value=""
   entryRefererInput.value=""
+  entryUserAgentInput.value=""
+  entryHeadersInput.value=""
+  entryDrmKeysInput.value=""
   entryImportToggle.checked=false
   entryEmbedToggle.checked=false
   addEntryBtn.textContent="Añadir aquí"
@@ -1285,7 +1540,7 @@ async function openStation(item, options={}) {
   if (item.import) { await importFromUrl(item.url); return }
 
   const originalUrl = (item?.url || "").trim()
-   if (!originalUrl) { showPlayerEmpty("Vídeo no válido"); setDebug("No hay URL para reproducir."); return }
+  if (!originalUrl) { showPlayerEmpty("Vídeo no válido"); setDebug("No hay URL para reproducir."); return }
   if (/^ace:\/\//i.test(originalUrl)) {
     showPlayerEmpty("Formato AceStream no soportado aquí")
     setDebug("AceStream no está soportado de forma nativa aquí. Solo funcionará si conviertes ese canal a una URL http(s) reproducible, por ejemplo mediante un engine/proxy externo que exponga un stream web.")
@@ -1293,7 +1548,9 @@ async function openStation(item, options={}) {
   }
 
   const sameItem = isCurrentItem(item)
-  if (sameItem && !options.force) { setDebug("Ese vídeo ya está seleccionado."); return }
+  if (sameItem && !options.force) {
+    setDebug("Relanzando el mismo vídeo...")
+  }
 
   currentItemKey = makeItemKey(item)
 
@@ -1323,7 +1580,7 @@ async function openStation(item, options={}) {
     }
     setLinkStatus(originalUrl, "ok")
     renderBrowser()
-    playUrl(resolved, item?.name || item?.title || "")
+     playUrl(resolved, item?.name || item?.title || "", item)
     return
   }
 
@@ -1354,7 +1611,7 @@ async function openStation(item, options={}) {
 
   setLinkStatus(originalUrl, "ok")
   renderBrowser()
-  playUrl(urlToPlay, item?.name || item?.title || "")
+  playUrl(urlToPlay, item?.name || item?.title || "", item)
 }
 function renderBrowser(){
   renderBreadcrumbs()
@@ -1600,6 +1857,9 @@ async function addEntryAtCurrentNode(){
   const info=entryInfoInput.value.trim()
   const url=entryUrlInput.value.trim()
   const referer=entryRefererInput.value.trim()
+  const userAgent=entryUserAgentInput.value.trim()
+  const extraHeaders=parseHeadersText(entryHeadersInput.value)
+  const drmKeys=parseDrmKeysText(entryDrmKeysInput.value)
 
   if(!name){ setDebug("Pon un nombre."); return }
 
@@ -1642,6 +1902,31 @@ async function addEntryAtCurrentNode(){
 
       if(referer) editingItemRef.referer=referer
       else delete editingItemRef.referer
+
+      if(userAgent) editingItemRef.userAgent=userAgent
+      else delete editingItemRef.userAgent
+
+      const cleanHeaders={ ...(extraHeaders||{}) }
+
+      if(Object.keys(cleanHeaders).length) editingItemRef.headers=cleanHeaders
+      else delete editingItemRef.headers
+
+      if(drmKeys){
+        editingItemRef.drm={ clearkey: drmKeys }
+
+        const drmEntries=Object.entries(drmKeys)
+        if(drmEntries.length===1){
+          editingItemRef.kid=drmEntries[0][0]
+          editingItemRef.key=drmEntries[0][1]
+        }else{
+          delete editingItemRef.kid
+          delete editingItemRef.key
+        }
+      }else{
+        delete editingItemRef.drm
+        delete editingItemRef.kid
+        delete editingItemRef.key
+      }
 
       if(needsResolution(url)) editingItemRef.isHost=true
       else delete editingItemRef.isHost
@@ -1688,10 +1973,25 @@ async function addEntryAtCurrentNode(){
 
     const newVideo={ name, image, url }
 
-    if(entryImportToggle.checked) newVideo.import=true
+        if(entryImportToggle.checked) newVideo.import=true
     if(entryEmbedToggle.checked) newVideo.embed=true
     if(info) newVideo.info=info
     if(referer) newVideo.referer=referer
+    if(userAgent) newVideo.userAgent=userAgent
+
+    const cleanHeaders={ ...(extraHeaders||{}) }
+    if(Object.keys(cleanHeaders).length) newVideo.headers=cleanHeaders
+
+    if(drmKeys){
+      newVideo.drm={ clearkey: drmKeys }
+
+      const drmEntries=Object.entries(drmKeys)
+      if(drmEntries.length===1){
+        newVideo.kid=drmEntries[0][0]
+        newVideo.key=drmEntries[0][1]
+      }
+    }
+
     if(needsResolution(url)) newVideo.isHost=true
 
     if(isStationContainer(node)){
@@ -1785,12 +2085,24 @@ on(manualResolveBtn,"click",async ()=>{
   playUrl(resolved, pendingManualResolveTitle || "Reproduciendo")
 })
 on(infoToggleBtn,"click",()=>toggleCurrentInfo())
-on(debugToggleBtn,"click",()=>{
-  if(!debugEl.textContent.trim()) return
-  debugEl.classList.toggle("hidden")
-})
+on(debugToggleBtn,"click",()=>toggleDebugPanel())
+renderDebugVisibility()
 
-document.addEventListener('click', (e)=>{ if(!e.target.closest('.card-menu')) closeAllLibraryMenus() })
+document.addEventListener('click', (e)=>{
+  if(!e.target.closest('.card-menu')) closeAllLibraryMenus()
+
+  const clickedCard=!!e.target.closest('.card')
+  const clickedPlayer=!!e.target.closest('.player-wrap')
+  const clickedControls=!!e.target.closest('.controls')
+  const clickedSidebar=!!e.target.closest('.sidebar')
+  const clickedBreadcrumb=!!e.target.closest('.crumb')
+  const clickedSearch=!!e.target.closest('.search-box')
+  const clickedBrowserButton=!!e.target.closest('#backFolderBtn') || !!e.target.closest('#refreshLibraryBtn')
+
+  if(!clickedCard && !clickedPlayer && !clickedControls && !clickedSidebar && !clickedBreadcrumb && !clickedSearch && !clickedBrowserButton){
+    clearCurrentSelection(true)
+  }
+})
 
 on(playPauseBtn,"click",togglePlay)
 on(backBtn,"click",()=>jumpBy(-getJumpSeconds()))

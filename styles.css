@@ -66,12 +66,41 @@ video{width:100%;display:block;background:#000;max-height:76vh;border:0;outline:
 .click-layer{position:absolute;inset:0;z-index:2;background:transparent}
 .side-hit{position:absolute;top:0;bottom:72px;width:18%;z-index:2;background:transparent}
 .side-hit.left{left:0}.side-hit.right{right:0}
-.controls{position:absolute;left:0;right:0;bottom:0;z-index:3;display:flex;align-items:center;gap:8px;padding:12px;background:linear-gradient(transparent,rgba(0,0,0,.85));flex-wrap:wrap}
+.controls{
+position:absolute;
+left:0;
+right:0;
+bottom:0;
+z-index:3;
+display:flex;
+align-items:center;
+gap:8px;
+padding:12px;
+background:linear-gradient(transparent,rgba(0,0,0,.85));
+flex-wrap:wrap;
+transition:opacity .22s ease
+}
 .control-btn{border:1px solid rgba(255,255,255,.16);background:rgba(25,25,25,.85);color:#fff;padding:8px 12px;border-radius:10px;cursor:pointer}
 .progress{flex:1;min-width:140px}
 .time-label{min-width:120px;text-align:center;font-size:13px;color:#ddd}
 .volume-wrap{position:relative;display:flex;align-items:center}
-.volume-panel{position:absolute;left:0;bottom:44px;display:flex;align-items:center;gap:8px;padding:8px 10px;background:rgba(20,20,20,.96);border:1px solid #333;border-radius:10px;opacity:0;pointer-events:none;transform:translateY(6px);transition:opacity .18s ease, transform .18s ease}
+.volume-panel{
+position:absolute;
+right:-4px;
+bottom:44px;
+display:flex;
+flex-direction:column;
+align-items:center;
+gap:8px;
+padding:12px 10px;
+background:rgba(20,20,20,.96);
+border:1px solid #333;
+border-radius:10px;
+opacity:0;
+pointer-events:none;
+transform:translateY(6px);
+transition:opacity .18s ease, transform .18s ease
+}
 .volume-wrap.show .volume-panel,.volume-wrap:hover .volume-panel,.volume-wrap:focus-within .volume-panel{opacity:1;pointer-events:auto;transform:translateY(0)}
 .volume{width:120px}
 .volume-label{font-size:12px;color:#ddd;min-width:42px;text-align:right}
@@ -94,7 +123,6 @@ video{width:100%;display:block;background:#000;max-height:76vh;border:0;outline:
 .menu-pop{position:absolute;right:0;top:34px;display:flex;flex-direction:column;gap:6px;padding:8px;background:#111;border:1px solid #333;border-radius:10px;min-width:120px;z-index:20}
 .volume-panel{left:auto;right:-4px;bottom:44px;flex-direction:column;padding:12px 10px}
 .volume{width:28px;height:130px;writing-mode:bt-lr;-webkit-appearance:slider-vertical;appearance:slider-vertical}
-.controls{transition:opacity .22s ease}
 .player-wrap.controls-hidden .controls{opacity:0;pointer-events:none}
 .player-wrap.controls-hidden .side-hit,.player-wrap.controls-hidden .click-layer{pointer-events:auto}
 .status-dot{
