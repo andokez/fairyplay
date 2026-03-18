@@ -89,6 +89,24 @@ let currentInfoText=""
 let currentInfoExpanded=false
 let debugExpanded=false
 
+const SETTINGS_KEY="player_v14_settings"
+const PROGRESS_KEY="player_v14_progress"
+const LINK_STATUS_KEY="player_v14_link_status"
+const RESOLVE_CACHE_KEY="player_v14_resolve_cache"
+const RESOLVER_KEY="resolver_config"
+const LEGACY_LIBS_KEY="player_v14_libraries"
+const DB_NAME="player_v14_db"
+const DB_VERSION=1
+const DB_STORE="kv"
+const DB_LIBRARIES_KEY="libraries"
+
+const DEFAULT_BACKEND_URL="http://localhost:3000/api/resolve"
+const RESOLVER_CONFIG={
+  useBackend:true,
+  backendUrl:DEFAULT_BACKEND_URL,
+  embedResolvers:false
+}
+
 function normalizeBackendUrl(value){
   const clean=String(value||"").trim()
   if(!clean) return DEFAULT_BACKEND_URL
@@ -118,26 +136,6 @@ async function updateResolverStatus() {
   } catch (e) {
     el.textContent = `🔴 Backend no detectado: ${backendUrl}`
   }
-}
-
-updateResolverStatus()
-
-const SETTINGS_KEY="player_v14_settings"
-const PROGRESS_KEY="player_v14_progress"
-const LINK_STATUS_KEY="player_v14_link_status"
-const RESOLVE_CACHE_KEY="player_v14_resolve_cache"
-const RESOLVER_KEY="resolver_config"
-const LEGACY_LIBS_KEY="player_v14_libraries"
-const DB_NAME="player_v14_db"
-const DB_VERSION=1
-const DB_STORE="kv"
-const DB_LIBRARIES_KEY="libraries"
-
-const DEFAULT_BACKEND_URL="http://localhost:3000/api/resolve"
-const RESOLVER_CONFIG={
-  useBackend:true,
-  backendUrl:DEFAULT_BACKEND_URL,
-  embedResolvers:false
 }
 
 function renderDebugVisibility(){
@@ -827,21 +825,28 @@ function getProxyHeadersFromItem(item, options={}){
 }
 
 function buildBackendMediaProxyUrl(url, item=null, extraHeaders={}){
-  const backendBase = normalizeBackendUrl(RESOLVER_CONFIG.backendUrl).replace(/\/api\/resolve$/i, '/api/proxy')
-  const u = new URL(backendBase)
-  u.searchParams.set('url', url)
-
   const baseHeaders=getProxyHeadersFromItem(item, { includeImplicit:true })
   const mergedHeaders={ ...baseHeaders, ...(extraHeaders||{}) }
 
-  for(const [k,v] of Object.entries(mergedHeaders)){
-    const key=String(k||"").trim()
-    const value=String(v||"").trim()
-    if(!key || !value) continue
-    u.searchParams.set(`h_${key}`, value)
+  const headersStr=Object.entries(mergedHeaders)
+    .filter(([k,v])=>k&&v)
+    .map(([k,v])=>`${k}:${v}`)
+    .join("\n")
+
+  const backendBase = normalizeBackendUrl(RESOLVER_CONFIG.backendUrl)
+    .replace(/\/resolve\/?$/, '')
+    .replace(/\/api\/?$/, '')
+
+  const params=new URLSearchParams()
+  params.set('url', url)
+  if(headersStr) params.set('headers', headersStr)
+
+  const drm=item?.drm?.clearkey
+  if(drm && typeof drm==="object" && Object.keys(drm).length){
+    params.set('drmKeys', JSON.stringify(drm))
   }
 
-  return u.toString()
+  return `${backendBase}/api/segment?${params.toString()}`
 }
 
 function normalizeDropboxUrl(url){
@@ -977,7 +982,6 @@ async function playUrl(url,title,item=null){
 
     const shouldProxyDash =
       type==="dash" &&
-      RESOLVER_CONFIG.useBackend &&
       (
         !!drm ||
         Object.keys(explicitProxyHeaders).length>0
@@ -985,15 +989,24 @@ async function playUrl(url,title,item=null){
 
     if(shouldProxyDash){
       playbackUrl=buildBackendMediaProxyUrl(url, item)
-      setDebug(`Reproduciendo MPD vía proxy backend:\n${playbackUrl}`)
+      setDebug(`Reproduciendo MPD vía proxy:\n${playbackUrl}`)
     }else{
       setDebug(`Reproduciendo directo:\n${url}`)
     }
 
-    if(type==="dash"){
+        if(type==="dash"){
       dashPlayer=dashjs.MediaPlayer().create()
 
       const dashProxyHeaders=getProxyHeadersFromItem(item, { includeImplicit:true })
+      const originalDashBase=new URL(url)
+      const dashDebugLines=[]
+      const pushDashDebug=(msg)=>{
+        const line=String(msg||"").trim()
+        if(!line) return
+        dashDebugLines.push(line)
+        setDebug(dashDebugLines.join("\n"))
+        try{ console.log(line) }catch{}
+      }
 
       dashPlayer.extend("RequestModifier", function(){
         return {
@@ -1001,12 +1014,48 @@ async function playUrl(url,title,item=null){
             const raw=String(requestUrl||"").trim()
             if(!raw) return raw
 
-            if(/^https?:\/\/localhost(?::\d+)?\/api\/proxy\b/i.test(raw)) return raw
-            if(/^https?:\/\/127\.0\.0\.1(?::\d+)?\/api\/proxy\b/i.test(raw)) return raw
+            try{ console.log("[modifyRequestURL][in]", raw) }catch{}
+
             if(/^blob:/i.test(raw)) return raw
             if(/^data:/i.test(raw)) return raw
 
-            return buildBackendMediaProxyUrl(raw, item, dashProxyHeaders)
+            if(/^https?:\/\/localhost(?::\d+)?\/api\/(?:segment|m3u8)\b/i.test(raw)) {
+              try{ console.log("[modifyRequestURL][skip-proxy]", raw) }catch{}
+              return raw
+            }
+            if(/^https?:\/\/127\.0\.0\.1(?::\d+)?\/api\/(?:segment|m3u8)\b/i.test(raw)) {
+              try{ console.log("[modifyRequestURL][skip-proxy]", raw) }catch{}
+              return raw
+            }
+            if(/\/api\/(?:segment|m3u8)\b/i.test(raw)) {
+              try{ console.log("[modifyRequestURL][skip-proxy]", raw) }catch{}
+              return raw
+            }
+
+            let fixedUrl=raw
+
+            if(/^https?:\/\/localhost(?::\d+)?\/api\/(?!segment\b|m3u8\b|resolve\b|fetch-text\b)/i.test(raw) ||
+               /^https?:\/\/127\.0\.0\.1(?::\d+)?\/api\/(?!segment\b|m3u8\b|resolve\b|fetch-text\b)/i.test(raw)){
+              const localPath=raw.replace(/^https?:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?\/api\//i, "")
+              fixedUrl=new URL(localPath, originalDashBase).toString()
+            }
+            else if(/^\/api\/(?!segment\b|m3u8\b|resolve\b|fetch-text\b)/i.test(raw)){
+              const localPath=raw.replace(/^\/api\//i, "")
+              fixedUrl=new URL(localPath, originalDashBase).toString()
+            }
+
+            const proxied=buildBackendMediaProxyUrl(fixedUrl, item, dashProxyHeaders)
+
+            try{
+              console.log("[modifyRequestURL][out]", {
+                raw,
+                fixedUrl,
+                proxied
+              })
+            }catch{}
+
+            pushDashDebug(`REQ URL:\n${raw}\n=>\n${proxied}`)
+            return proxied
           },
           modifyRequestHeader: function(xhr){
             return xhr
@@ -1014,24 +1063,127 @@ async function playUrl(url,title,item=null){
         }
       }, true)
 
+      const dashEvents=dashjs.MediaPlayer.events
+
+      dashPlayer.on(dashEvents.ERROR, (e)=>{
+        pushDashDebug(`DASH ERROR:\n${JSON.stringify(e, null, 2)}`)
+      })
+
+      if(dashEvents.PLAYBACK_ERROR){
+        dashPlayer.on(dashEvents.PLAYBACK_ERROR, (e)=>{
+          pushDashDebug(`PLAYBACK ERROR:\n${JSON.stringify(e, null, 2)}`)
+        })
+      }
+
+      if(dashEvents.KEY_ERROR){
+        dashPlayer.on(dashEvents.KEY_ERROR, (e)=>{
+          pushDashDebug(`KEY ERROR:\n${JSON.stringify(e, null, 2)}`)
+        })
+      }
+
+      if(dashEvents.MANIFEST_LOADED){
+        dashPlayer.on(dashEvents.MANIFEST_LOADED, (e)=>{
+          pushDashDebug(`MANIFEST LOADED:\n${JSON.stringify({
+            type:e?.type||"",
+            url:e?.data?.url||playbackUrl
+          }, null, 2)}`)
+        })
+      }
+
+      if(dashEvents.STREAM_INITIALIZED){
+        dashPlayer.on(dashEvents.STREAM_INITIALIZED, ()=>{
+          pushDashDebug(`STREAM INITIALIZED`)
+        })
+      }
+
+      if(dashEvents.PLAYBACK_STARTED){
+        dashPlayer.on(dashEvents.PLAYBACK_STARTED, ()=>{
+          pushDashDebug(`PLAYBACK STARTED`)
+        })
+      }
+
+      if(dashEvents.FRAGMENT_LOADING_STARTED){
+        dashPlayer.on(dashEvents.FRAGMENT_LOADING_STARTED, (e)=>{
+          const reqUrl=e?.request?.url || e?.url || ""
+          if(reqUrl){
+            pushDashDebug(`FRAGMENT START:\n${reqUrl}`)
+            try{
+              console.log("[frag-start-full]", {
+                reqUrl,
+                request: e?.request || null,
+                event: e || null
+              })
+            }catch{}
+          }
+        })
+      }
+
+      if(dashEvents.FRAGMENT_LOADING_COMPLETED){
+        dashPlayer.on(dashEvents.FRAGMENT_LOADING_COMPLETED, (e)=>{
+          const reqUrl=e?.request?.url || e?.url || ""
+          if(reqUrl){
+            pushDashDebug(`FRAGMENT OK:\n${reqUrl}`)
+            try{
+              console.log("[frag-ok-full]", {
+                reqUrl,
+                request: e?.request || null,
+                event: e || null
+              })
+            }catch{}
+          }
+        })
+      }
+
+      dashPlayer.updateSettings({
+        streaming: {
+          protection: {
+            ignoreEmeEncryptedEvent: !!drm
+          }
+        }
+      })
+
       if(drm){
         dashPlayer.setProtectionData({
-          "org.w3.clearkey":{
+          "org.w3.clearkey": {
             clearkeys: drm
           }
         })
-        setDebug(`DASH ClearKey activado (${Object.keys(drm).length} keys)`)
+        pushDashDebug(`DASH ClearKey activado (${Object.keys(drm).length} keys)`)
+        pushDashDebug(`DASH protección: ignoreEmeEncryptedEvent=ON`)
       }
+
+      video.addEventListener("error", ()=>{
+        const mediaError=video.error
+        if(!mediaError) return
+        pushDashDebug(`VIDEO ERROR:\ncode=${mediaError.code}\nmessage=${mediaError.message||"sin mensaje"}`)
+      }, { once:false })
 
       dashPlayer.initialize(video, playbackUrl, true)
     }
     else if(type==="hls"){
+      const hlsHeaders=getProxyHeadersFromItem(item, { includeImplicit:true })
+      const hasHlsHeaders=Object.keys(hlsHeaders).length>0
+      let hlsUrl=playbackUrl
+      if(hasHlsHeaders){
+        const headersStr=Object.entries(hlsHeaders)
+          .filter(([k,v])=>k&&v)
+          .map(([k,v])=>`${k}:${v}`)
+          .join("\n")
+        const backendBase = normalizeBackendUrl(RESOLVER_CONFIG.backendUrl)
+          .replace(/\/resolve\/?$/, '')
+          .replace(/\/api\/?$/, '')
+        const params=new URLSearchParams()
+        params.set('url', playbackUrl)
+        params.set('headers', headersStr)
+        hlsUrl=`${backendBase}/api/m3u8?${params.toString()}`
+        setDebug(`Reproduciendo HLS vía proxy:\n${hlsUrl}`)
+      }
       if(window.Hls&&Hls.isSupported()){
         hlsPlayer=new Hls()
-        hlsPlayer.loadSource(playbackUrl)
+        hlsPlayer.loadSource(hlsUrl)
         hlsPlayer.attachMedia(video)
       } else {
-        video.src=playbackUrl
+        video.src=hlsUrl
       }
     }
     else {
@@ -1039,10 +1191,34 @@ async function playUrl(url,title,item=null){
     }
 
     await ensureAudioBoost()
-    applyVolume()
 
-    if(type!=="dash"){
-      video.play().catch(()=>{})
+    let autoPlayOk = false
+
+    try{
+      video.muted = true
+      applyVolume()
+      await video.play()
+      autoPlayOk = true
+      setDebug("Autoplay arrancado en silencio. Pulsa play para activar audio si hace falta.")
+    }catch(err){
+      try{
+        setDebug((debugEl?.textContent ? debugEl.textContent + "\n" : "") + `PLAY ERROR:\n${err?.message || err}`)
+      }catch{}
+    }
+
+    if(autoPlayOk){
+      const unlockAudio = async ()=>{
+        try{
+          video.muted = false
+          if(audioCtx && audioCtx.state === "suspended"){
+            await audioCtx.resume()
+          }
+          applyVolume()
+        }catch{}
+      }
+
+      video.addEventListener("click", unlockAudio, { once:true })
+      document.addEventListener("keydown", unlockAudio, { once:true })
     }
 
     const remembered=rememberToggle.checked?getProgress(url):0
@@ -1066,9 +1242,41 @@ function playYoutubeUrl(url,title){
    showPlayerLoaded(); showYoutubeFrame(embedUrl); playerSection.scrollIntoView({behavior:"smooth", block:"start"}); setDebug("Reproduciendo YouTube en el panel.")
 }
 function jumpBy(s){ if(video.classList.contains("hidden")) return; video.currentTime=Math.max(0,Math.min(video.duration||Infinity,video.currentTime+s)) }
-function togglePlay(){ if(video.classList.contains("hidden")) return; if(video.paused)video.play().catch(()=>{}); else video.pause() }
+async function togglePlay(){
+  if(video.classList.contains("hidden")) return
+
+  if(video.paused){
+    try{
+      video.muted = false
+      if(audioCtx && audioCtx.state === "suspended"){
+        await audioCtx.resume()
+      }
+      applyVolume()
+      await video.play()
+    }catch{}
+  } else {
+    video.pause()
+  }
+}
 function toggleFullscreen(){ if(!document.fullscreenElement)playerWrap.requestFullscreen().catch(()=>{}); else document.exitFullscreen().catch(()=>{}) }
-async function ensureAudioBoost(){ if(audioBoostReady)return; try{ audioCtx=new (window.AudioContext||window.webkitAudioContext)(); sourceNode=audioCtx.createMediaElementSource(video); gainNode=audioCtx.createGain(); sourceNode.connect(gainNode); gainNode.connect(audioCtx.destination); audioBoostReady=true }catch(e){ setDebug("Boost no disponible en este navegador.") } }
+async function ensureAudioBoost(){
+  try{
+    if(!audioBoostReady){
+      audioCtx=new (window.AudioContext||window.webkitAudioContext)()
+      sourceNode=audioCtx.createMediaElementSource(video)
+      gainNode=audioCtx.createGain()
+      sourceNode.connect(gainNode)
+      gainNode.connect(audioCtx.destination)
+      audioBoostReady=true
+    }
+
+    if(audioCtx && audioCtx.state === "suspended"){
+      await audioCtx.resume()
+    }
+  }catch(e){
+    setDebug("Boost no disponible en este navegador.")
+  }
+}
 function applyVolume(){ const percent=Number(volumeRange.value)||100; volumeLabel.textContent=percent+"%"; const boostAllowed=boostToggle.checked; if(percent<=100){ video.volume=percent/100; if(gainNode)gainNode.gain.value=1 } else { video.volume=1; if(gainNode)gainNode.gain.value=boostAllowed ? percent/100 : 1 } updateMuteLabel() }
 function showVolumePanel(){ volumeWrap.classList.add("show") }
 function hideVolumePanelSoon(){ setTimeout(()=>{ if(!volumeWrap.matches(":hover") && document.activeElement!==volumeRange){ volumeWrap.classList.remove("show") } },180) }
@@ -1110,17 +1318,36 @@ function looksLikeJsonPayload(text){
 async function tryFetchText(url){
   const fixed=normalizeDropboxUrl(url)
   const attempts=[
-    { url: fixed, label: "directa" },
-    { url: "https://api.allorigins.win/raw?url="+encodeURIComponent(fixed), label: "allorigins" }
+    { url: fixed, label: "directa", mode: "cors" },
+    { url: "https://api.allorigins.win/raw?url="+encodeURIComponent(fixed), label: "allorigins", mode: "cors" }
   ]
+
+  if(RESOLVER_CONFIG.useBackend){
+    const backendBase=normalizeBackendUrl(RESOLVER_CONFIG.backendUrl).replace(/\/api\/resolve$/i, "/api/fetch-text")
+    attempts.push({
+      url: `${backendBase}?url=${encodeURIComponent(fixed)}`,
+      label: "backend",
+      mode: "cors",
+      isBackend: true
+    })
+  }
 
   let lastErr="No se pudo cargar"
 
   for(const attempt of attempts){
     try{
-      const res=await fetch(attempt.url)
+      const res=await fetch(attempt.url, { method:"GET", mode:attempt.mode || "cors" })
       if(!res.ok) throw new Error("HTTP "+res.status)
-      const rawText=await res.text()
+
+      let rawText=""
+      if(attempt.isBackend){
+        const data=await res.json()
+        if(!data?.success || !data?.text) throw new Error(data?.error || "Respuesta vacía")
+        rawText=data.text
+      }else{
+        rawText=await res.text()
+      }
+
       const text=extractLikelyJsonPayload(rawText)
       if(!text || !text.trim()) throw new Error("Respuesta vacía")
       return text
