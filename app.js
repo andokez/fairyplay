@@ -939,6 +939,18 @@ function drmKeysToText(item){
   return (kid && key) ? `${kid}:${key}` : ""
 }
 
+function hexToBase64Url(hex){
+  const clean=String(hex||"").trim().replace(/-/g,"").toLowerCase()
+  if(!clean || clean.length % 2 !== 0) return ""
+  const bytes=[]
+  for(let i=0;i<clean.length;i+=2){
+    bytes.push(parseInt(clean.slice(i,i+2),16))
+  }
+  let binary=""
+  for(const b of bytes) binary+=String.fromCharCode(b)
+  return btoa(binary).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"")
+}
+
 function getDrmConfigFromItem(item){
   const drm=item?.drm?.clearkey
 
@@ -946,16 +958,23 @@ function getDrmConfigFromItem(item){
     const keys={}
     for(const k in drm){
       if(!k || !drm[k]) continue
-      keys[normalizeDrmHex(k)]=normalizeDrmHex(drm[k])
+      const kidHex=normalizeDrmHex(k)
+      const keyHex=normalizeDrmHex(drm[k])
+      const kidB64=hexToBase64Url(kidHex)
+      const keyB64=hexToBase64Url(keyHex)
+      if(!kidB64 || !keyB64) continue
+      keys[kidB64]=keyB64
     }
     if(Object.keys(keys).length) return keys
   }
 
-  const kid=normalizeDrmHex(item?.kid||"")
-  const key=normalizeDrmHex(item?.key||"")
+  const kidHex=normalizeDrmHex(item?.kid||"")
+  const keyHex=normalizeDrmHex(item?.key||"")
+  const kidB64=hexToBase64Url(kidHex)
+  const keyB64=hexToBase64Url(keyHex)
 
-  if(kid && key){
-    return { [kid]: key }
+  if(kidB64 && keyB64){
+    return { [kidB64]: keyB64 }
   }
 
   return null
@@ -1150,6 +1169,7 @@ async function playUrl(url,title,item=null){
         })
         pushDashDebug(`DASH ClearKey activado (${Object.keys(drm).length} keys)`)
         pushDashDebug(`DASH protección: ignoreEmeEncryptedEvent=ON`)
+        pushDashDebug(`DASH ClearKey formato dash.js:\n${JSON.stringify(drm, null, 2)}`)
       }
 
       video.addEventListener("error", ()=>{
