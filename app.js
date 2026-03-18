@@ -1285,8 +1285,17 @@ async function playUrl(url,title,item=null){
     else if(type==="hls"){
       const hlsHeaders=getProxyHeadersFromItem(item, { includeImplicit:true })
       const hasHlsHeaders=Object.keys(hlsHeaders).length>0
+
+      let forceHlsProxy=false
+      try{
+        const u=new URL(playbackUrl)
+        forceHlsProxy=!!(u.username || u.password)
+      }catch{}
+
+      const shouldProxyHls=hasHlsHeaders || forceHlsProxy
+
       let hlsUrl=playbackUrl
-      if(hasHlsHeaders){
+      if(shouldProxyHls){
         const headersStr=Object.entries(hlsHeaders)
           .filter(([k,v])=>k&&v)
           .map(([k,v])=>`${k}:${v}`)
@@ -1296,12 +1305,24 @@ async function playUrl(url,title,item=null){
           .replace(/\/api\/?$/, '')
         const params=new URLSearchParams()
         params.set('url', playbackUrl)
-        params.set('headers', headersStr)
+        if(headersStr) params.set('headers', headersStr)
         hlsUrl=`${backendBase}/api/m3u8?${params.toString()}`
         setDebug(`Reproduciendo HLS vía proxy:\n${hlsUrl}`)
+      } else {
+        setDebug(`Reproduciendo HLS directo:\n${hlsUrl}`)
       }
-      if(window.Hls&&Hls.isSupported()){
+
+      if(window.Hls && Hls.isSupported()){
         hlsPlayer=new Hls()
+
+        hlsPlayer.on(Hls.Events.MANIFEST_PARSED, ()=>{
+          video.play().catch(()=>{})
+        })
+
+        hlsPlayer.on(Hls.Events.LEVEL_LOADED, ()=>{
+          video.play().catch(()=>{})
+        })
+
         hlsPlayer.loadSource(hlsUrl)
         hlsPlayer.attachMedia(video)
       } else {
@@ -1323,7 +1344,7 @@ async function playUrl(url,title,item=null){
     video.muted = false
     applyVolume()
 
-    if(type!=="dash"){
+    if(type!=="dash" && type!=="hls"){
       video.play().catch((err)=>{
         try{
           setDebug((debugEl?.textContent ? debugEl.textContent + "\n" : "") + `PLAY ERROR:\n${err?.message || err}`)
