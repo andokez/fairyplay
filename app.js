@@ -631,16 +631,34 @@ async function playNextInCurrentNode(){ const stations=getCurrentNodeStations();
 function isDirectMediaUrl(url) {
   if (!url) return false
   const clean = url.split('#')[0].split('?')[0].toLowerCase()
+
   return clean.endsWith('.mp4')
     || clean.endsWith('.m4v')
+    || clean.endsWith('.m4a')
+    || clean.endsWith('.m4s')
+    || clean.endsWith('.cmfv')
+    || clean.endsWith('.cmfa')
     || clean.endsWith('.webm')
+    || clean.endsWith('.mp3')
+    || clean.endsWith('.aac')
+    || clean.endsWith('.flac')
+    || clean.endsWith('.wav')
+    || clean.endsWith('.ogg')
+    || clean.endsWith('.ogv')
+    || clean.endsWith('.oga')
     || clean.endsWith('.mov')
     || clean.endsWith('.mkv')
+    || clean.endsWith('.avi')
+    || clean.endsWith('.wmv')
     || clean.endsWith('.mpd')
     || clean.endsWith('.m3u8')
     || clean.endsWith('.m3u')
     || clean.endsWith('.ts')
-    || clean.endsWith('.ogv')
+    || clean.endsWith('.mpg')
+    || clean.endsWith('.mpeg')
+    || clean.endsWith('.ism')
+    || clean.endsWith('.isml')
+    || clean.endsWith('.ism/manifest')
 }
 function needsResolution(url) {
   if (!url) return false
@@ -655,9 +673,9 @@ function extractMediaCandidatesFromHtml(html, baseUrl=""){
   const text=String(html||"")
   const patterns=[
     /sources\s*:\s*\[\s*\{[\s\S]*?file\s*:\s*['"]([^'"]+)['"]/ig,
-    /(?:file|src|url)\s*[:=]\s*['"]([^'"]+\.(?:m3u8|m3u|mpd|mp4|m4v|webm|mov|mkv|ts|ogv)[^'"]*)['"]/ig,
-    /['"](https?:\/\/[^'"]+\.(?:m3u8|m3u|mpd|mp4|m4v|webm|mov|mkv|ts|ogv)[^'"]*)['"]/ig,
-    /['"]((?:\/|\.\/|\.\.\/)[^'"]+\.(?:m3u8|m3u|mpd|mp4|m4v|webm|mov|mkv|ts|ogv)[^'"]*)['"]/ig
+    /(?:file|src|url)\s*[:=]\s*['"]([^'"]+\.(?:m3u8|m3u|mpd|mp4|m4v|m4a|m4s|cmfv|cmfa|webm|mp3|aac|flac|wav|ogg|ogv|oga|mov|mkv|avi|wmv|ts|mpg|mpeg|isml|ism)[^'"]*)['"]/ig,
+    /['"](https?:\/\/[^'"]+\.(?:m3u8|m3u|mpd|mp4|m4v|m4a|m4s|cmfv|cmfa|webm|mp3|aac|flac|wav|ogg|ogv|oga|mov|mkv|avi|wmv|ts|mpg|mpeg|isml|ism)[^'"]*)['"]/ig,
+    /['"]((?:\/|\.\/|\.\.\/)[^'"]+\.(?:m3u8|m3u|mpd|mp4|m4v|m4a|m4s|cmfv|cmfa|webm|mp3|aac|flac|wav|ogg|ogv|oga|mov|mkv|avi|wmv|ts|mpg|mpeg|isml|ism)[^'"]*)['"]/ig
   ]
   const found=[]
   for(const pattern of patterns){
@@ -862,10 +880,21 @@ function normalizeDropboxUrl(url){
 function destroyPlayers(){ try{if(dashPlayer){dashPlayer.reset();dashPlayer=null}}catch{}; try{if(hlsPlayer){hlsPlayer.destroy();hlsPlayer=null}}catch{}; video.pause(); video.removeAttribute("src"); video.load() }
 
 function inferType(url){
-  const clean=(url||"").split("#")[0].split("?")[0].toLowerCase()
-  if(clean.endsWith(".mpd")) return "dash"
-  if(clean.endsWith(".m3u8") || clean.endsWith(".m3u")) return "hls"
-  if(clean.endsWith(".ts")) return "file"
+  const raw=String(url||"").toLowerCase()
+  const clean=raw.split("#")[0].split("?")[0]
+
+  if(
+    clean.endsWith(".mpd") ||
+    clean.endsWith(".isml") ||
+    clean.endsWith(".ism") ||
+    raw.includes(".ism/manifest")
+  ) return "dash"
+
+  if(
+    clean.endsWith(".m3u8") ||
+    clean.endsWith(".m3u")
+  ) return "hls"
+
   return "file"
 }
 
@@ -1206,6 +1235,7 @@ async function playUrl(url,title,item=null){
           setTimeout(()=>kickDashPlayback("stream_initialized"), 0)
           setTimeout(()=>kickDashPlayback("stream_initialized+300ms"), 300)
           setTimeout(()=>kickDashPlayback("stream_initialized+900ms"), 900)
+		  setTimeout(()=>kickDashPlayback("stream_initialized+2000ms"), 2000)
         })
       }
 
@@ -1376,19 +1406,22 @@ function jumpBy(s){ if(video.classList.contains("hidden")) return; video.current
 async function togglePlay(){
   if(video.classList.contains("hidden")) return
 
-  // Si ya está reproduciendo pero en mute por autoplay,
-  // el primer toque debe desbloquear audio, no pausar.
-  if(!video.paused && video.muted){
+async function togglePlay(){
+  if(video.classList.contains("hidden")) return
+
+  if(video.paused){
     try{
+      video.muted = false
       if(audioCtx && audioCtx.state === "suspended"){
         await audioCtx.resume()
       }
-      video.muted = false
       applyVolume()
-      await video.play().catch(()=>{})
+      await video.play()
     }catch{}
-    return
+  } else {
+    video.pause()
   }
+}
 
   if(video.paused){
     try{
