@@ -1306,6 +1306,18 @@ async function playUrl(url,title,item=null){
 
       dashPlayer.updateSettings({
         streaming: {
+          buffer: {
+            fastSwitchEnabled: false,
+            bufferPruningInterval: 10,
+            bufferToKeep: 30,
+            bufferTimeAtTopQuality: 30,
+            bufferTimeAtTopQualityLongForm: 45,
+            initialBufferLevel: 8,
+            stableBufferTime: 20
+          },
+          delay: {
+            liveDelayFragmentCount: 4
+          },
           protection: {
             ignoreEmeEncryptedEvent: true
           }
@@ -1357,7 +1369,19 @@ async function playUrl(url,title,item=null){
       }
 
       if(window.Hls && Hls.isSupported()){
-        hlsPlayer=new Hls()
+        hlsPlayer=new Hls({
+          maxBufferLength: 30,
+          backBufferLength: 30,
+          maxMaxBufferLength: 60,
+          liveSyncDurationCount: 3,
+          liveMaxLatencyDurationCount: 10,
+          highBufferWatchdogPeriod: 2,
+          nudgeOffset: 0.1,
+          nudgeMaxRetry: 8,
+          fragLoadingTimeOut: 20000,
+          manifestLoadingTimeOut: 20000,
+          levelLoadingTimeOut: 20000
+        })
 
         hlsPlayer.on(Hls.Events.MANIFEST_PARSED, ()=>{
           video.play().catch(()=>{})
@@ -1365,6 +1389,14 @@ async function playUrl(url,title,item=null){
 
         hlsPlayer.on(Hls.Events.LEVEL_LOADED, ()=>{
           video.play().catch(()=>{})
+        })
+
+        hlsPlayer.on(Hls.Events.ERROR, (_event, data)=>{
+          if(data?.fatal){
+            try{
+              setDebug((debugEl?.textContent ? debugEl.textContent + "\n" : "") + `HLS ERROR:\n${JSON.stringify(data, null, 2)}`)
+            }catch{}
+          }
         })
 
         hlsPlayer.loadSource(hlsUrl)
@@ -1539,6 +1571,49 @@ function parseKodiStreamHeaders(value){
   }
 }
 
+function parseUrlWithInlineHeaders(value){
+  const raw=String(value||"").trim()
+  if(!raw) return { url:"", userAgent:"", referer:"", headers:{} }
+
+  const parts=raw.split("|").map(v=>String(v||"").trim()).filter(Boolean)
+  const baseUrl=parts.shift() || ""
+
+  const headers={}
+  let userAgent=""
+  let referer=""
+
+  for(const part of parts){
+    const idx=part.indexOf("=")
+    if(idx<0) continue
+
+    const key=part.slice(0, idx).trim()
+    const val=part.slice(idx+1).trim()
+
+    if(!key || !val) continue
+
+    const lower=key.toLowerCase()
+
+    if(lower==="user-agent"){
+      userAgent=val
+      continue
+    }
+
+    if(lower==="referer" || lower==="referrer"){
+      referer=val
+      continue
+    }
+
+    headers[key]=val
+  }
+
+  return {
+    url: baseUrl,
+    userAgent,
+    referer,
+    headers
+  }
+}
+
 function parseM3uText(text, sourceUrl=""){
   const lines=String(text||"").replace(/^\uFEFF/, "").split(/\r?\n/)
   const groupsMap=new Map()
@@ -1559,10 +1634,19 @@ function parseM3uText(text, sourceUrl=""){
   let pending=null
 
   const flushPendingWithUrl=(urlLine)=>{
-    const finalUrl=String(urlLine||"").trim()
+    const parsedUrl=parseUrlWithInlineHeaders(urlLine)
+    const finalUrl=String(parsedUrl.url||"").trim()
     if(!pending || !finalUrl) return
 
     const group=getGroup(pending.groupTitle || "Sin grupo")
+
+    const mergedHeaders={
+      ...(pending.headers||{}),
+      ...(parsedUrl.headers||{})
+    }
+
+    const finalReferer=pending.referer || parsedUrl.referer || ""
+    const finalUserAgent=pending.userAgent || parsedUrl.userAgent || ""
 
     const item={
       name: pending.name || "Sin título",
@@ -1573,9 +1657,9 @@ function parseM3uText(text, sourceUrl=""){
     if(pending.info) item.info=pending.info
     if(pending.import) item.import=true
     if(pending.embed) item.embed=true
-    if(pending.referer) item.referer=pending.referer
-    if(pending.userAgent) item.userAgent=pending.userAgent
-    if(pending.headers && Object.keys(pending.headers).length) item.headers=pending.headers
+    if(finalReferer) item.referer=finalReferer
+    if(finalUserAgent) item.userAgent=finalUserAgent
+    if(Object.keys(mergedHeaders).length) item.headers=mergedHeaders
 
     if(pending.drmKeys && Object.keys(pending.drmKeys).length){
       item.drm={ clearkey: pending.drmKeys }
