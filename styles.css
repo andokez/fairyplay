@@ -62,7 +62,25 @@ h2{font-size:18px;margin:0 0 10px}
 .player-wrap{position:relative;background:#000;border-radius:14px;overflow:hidden;border:1px solid #2a2a2a}
 video{width:100%;display:block;background:#000;max-height:76vh;border:0;outline:none;box-shadow:none}
 .player-wrap:fullscreen,.player-wrap:-webkit-full-screen{border:0;border-radius:0;box-shadow:none}
-.player-wrap:fullscreen video,.player-wrap:-webkit-full-screen video,.player-wrap:fullscreen .youtube-frame,.player-wrap:-webkit-full-screen .youtube-frame{width:100vw;height:100vh;max-height:none;object-fit:contain;border:0;outline:none;box-shadow:none;background:#000}
+.player-wrap:fullscreen video,
+.player-wrap:-webkit-full-screen video,
+.player-wrap:fullscreen .youtube-frame,
+.player-wrap:-webkit-full-screen .youtube-frame{
+  width:100vw;
+  height:100vh;
+  max-height:none;
+  object-fit:contain;
+  border:0;
+  outline:none;
+  box-shadow:none;
+  background:#000;
+}
+
+.player-wrap.show-embed-controls .controls,
+.player-wrap.show-embed-controls .click-layer,
+.player-wrap.show-embed-controls .side-hit{
+  display:none!important;
+}
 .click-layer{position:absolute;inset:0;z-index:2;background:transparent}
 .side-hit{position:absolute;top:0;bottom:72px;width:18%;z-index:2;background:transparent}
 .side-hit.left{left:0}.side-hit.right{right:0}

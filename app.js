@@ -247,8 +247,36 @@ function showManualResolve(url,title,referer="",item=null){
   pendingManualResolveItem=item||null
   if(manualResolveBox) manualResolveBox.classList.remove("hidden")
 }
-function hideYoutubeFrame(){ if(youtubeFrame){ youtubeFrame.classList.add("hidden"); youtubeFrame.removeAttribute("src") } video.classList.remove("hidden"); clickLayer.classList.remove("hidden"); leftHit.classList.remove("hidden"); rightHit.classList.remove("hidden") }
-function showYoutubeFrame(embedUrl){ destroyPlayers(); showPlayer(); hideManualResolve(); video.classList.add("hidden"); clickLayer.classList.add("hidden"); leftHit.classList.add("hidden"); rightHit.classList.add("hidden"); if(youtubeFrame){ youtubeFrame.classList.remove("hidden"); youtubeFrame.src=embedUrl } }
+function hideYoutubeFrame(){
+  if(youtubeFrame){
+    youtubeFrame.classList.add("hidden")
+    youtubeFrame.removeAttribute("src")
+  }
+  if(playerWrap) playerWrap.classList.remove("show-embed-controls")
+  video.classList.remove("hidden")
+  clickLayer.classList.remove("hidden")
+  leftHit.classList.remove("hidden")
+  rightHit.classList.remove("hidden")
+}
+
+function showEmbedFrame(embedUrl){
+  destroyPlayers()
+  showPlayerLoaded()
+  hideManualResolve()
+  video.classList.add("hidden")
+  clickLayer.classList.add("hidden")
+  leftHit.classList.add("hidden")
+  rightHit.classList.add("hidden")
+  if(playerWrap) playerWrap.classList.add("show-embed-controls")
+  if(youtubeFrame){
+    youtubeFrame.classList.remove("hidden")
+    youtubeFrame.src=embedUrl
+  }
+}
+
+function showYoutubeFrame(embedUrl){
+  showEmbedFrame(embedUrl)
+}
 function loadSettings(){try{return JSON.parse(localStorage.getItem(SETTINGS_KEY)||"{}")}catch{return{}}}
 function saveSettings(){ const s=loadSettings(); s.autoplay=autoplayToggle.checked; s.remember=rememberToggle.checked; s.boost=boostToggle.checked; s.jumpSeconds=getJumpSeconds(); s.volumePercent=Number(volumeRange.value)||100; s.sidebarCollapsed=!!appRoot?.classList.contains("sidebar-collapsed"); localStorage.setItem(SETTINGS_KEY,JSON.stringify(s)); applyVolume() }
 function loadProgressMap(){try{return JSON.parse(localStorage.getItem(PROGRESS_KEY)||"{}")}catch{return{}}}
@@ -644,6 +672,7 @@ async function playNextInCurrentNode(){ const stations=getCurrentNodeStations();
 
 function isDirectMediaUrl(url) {
   if (!url) return false
+
   const clean = url.split('#')[0].split('?')[0].toLowerCase()
 
   return clean.endsWith('.mp4')
@@ -745,7 +774,10 @@ function isPlayableLeaf(item){
 function isVideoLeaf(item){
   return isPlayableLeaf(item)
 }
-function isYoutubeUrl(url){ return /(?:youtube\.com|youtu\.be)/i.test(String(url||"")) }
+function isYoutubeUrl(url){
+  return /(?:youtube\.com|youtu\.be)/i.test(String(url||""))
+}
+
 function getYoutubeEmbedUrl(url){
   const raw=String(url||"").trim()
   try{
@@ -759,7 +791,65 @@ function getYoutubeEmbedUrl(url){
     }
     if(!id) return null
     return `https://www.youtube-nocookie.com/embed/${id}?autoplay=1&rel=0&modestbranding=1&playsinline=1`
-  }catch{return null}
+  }catch{
+    return null
+  }
+}
+
+function extractGoogleDriveFileId(url){
+  const raw=String(url||"").trim()
+  if(!raw) return ""
+
+  try{
+    const u=new URL(raw)
+
+    if(!/(^|\.)drive\.google\.com$/i.test(u.hostname)) return ""
+
+    const byQuery=u.searchParams.get("id")
+    if(byQuery) return byQuery.trim()
+
+    const byFilePath=u.pathname.match(/\/file\/d\/([^/]+)/i)
+    if(byFilePath?.[1]) return byFilePath[1].trim()
+
+    const byPreviewPath=u.pathname.match(/\/file\/d\/([^/]+)\/preview/i)
+    if(byPreviewPath?.[1]) return byPreviewPath[1].trim()
+
+    return ""
+  }catch{
+    return ""
+  }
+}
+
+function isGoogleDriveUrl(url){
+  return !!extractGoogleDriveFileId(url)
+}
+
+function getGoogleDrivePreviewUrl(url){
+  const id=extractGoogleDriveFileId(url)
+  if(!id) return null
+  return `https://drive.google.com/file/d/${encodeURIComponent(id)}/preview`
+}
+
+function isGoogleHostedMediaUrl(url){
+  const raw=String(url||"").trim()
+  if(!raw) return false
+
+  try{
+    const u=new URL(raw)
+    const host=u.hostname.toLowerCase()
+
+    return host==="drive.usercontent.google.com"
+      || host.endsWith(".drive.usercontent.google.com")
+      || host==="lh3.googleusercontent.com"
+      || host.endsWith(".googleusercontent.com")
+      || host.endsWith(".googlevideo.com")
+      || host==="c.drive.google.com"
+      || host.endsWith(".c.drive.google.com")
+      || host==="drive.google.com"
+      || host.endsWith(".drive.google.com")
+  }catch{
+    return false
+  }
 }
 
 async function embedResolver(url) {
@@ -894,6 +984,8 @@ function normalizeDropboxUrl(url){
 function destroyPlayers(){ try{if(dashPlayer){dashPlayer.reset();dashPlayer=null}}catch{}; try{if(hlsPlayer){hlsPlayer.destroy();hlsPlayer=null}}catch{}; video.pause(); video.removeAttribute("src"); video.load() }
 
 function inferType(url){
+  if(isGoogleDriveUrl(url)) return "file"
+
   const raw=String(url||"").toLowerCase()
   const clean=raw.split("#")[0].split("?")[0]
 
@@ -1117,9 +1209,11 @@ async function playUrl(url,title,item=null){
   currentPlayableTitle=title||"Reproduciendo"
 
   try{
-    const type=inferType(url)
+    const originalUrl=String(url||"").trim()
+
+    const type=inferType(originalUrl)
     const drm=getDrmConfigFromItem(item)
-    let playbackUrl=url
+    let playbackUrl=originalUrl
 
     const explicitProxyHeaders=getProxyHeadersFromItem(item, { includeImplicit:false })
 
@@ -1130,11 +1224,17 @@ async function playUrl(url,title,item=null){
         Object.keys(explicitProxyHeaders).length>0
       )
 
+    const shouldProxyGoogleHostedMedia =
+      isGoogleHostedMediaUrl(originalUrl)
+
     if(shouldProxyDash){
-      playbackUrl=buildBackendMediaProxyUrl(url, item)
+      playbackUrl=buildBackendMediaProxyUrl(originalUrl, item)
       setDebug(`Reproduciendo MPD vía proxy:\n${playbackUrl}`)
+    }else if(shouldProxyGoogleHostedMedia){
+      playbackUrl=buildBackendMediaProxyUrl(originalUrl, item)
+      setDebug(`Reproduciendo Google media vía proxy:\n${playbackUrl}`)
     }else{
-      setDebug(`Reproduciendo directo:\n${url}`)
+      setDebug(`Reproduciendo directo:\n${originalUrl}`)
     }
 
         if(type==="dash"){
@@ -1441,12 +1541,25 @@ async function playUrl(url,title,item=null){
 }
 function playYoutubeUrl(url,title){
   const embedUrl=getYoutubeEmbedUrl(url)
-  if(!embedUrl){ setDebug("No se pudo convertir el enlace de YouTube."); return }
-  currentPlayableTitle=title||"YouTube"; nowPlayingEl.textContent=title||"YouTube"
-  if(location.protocol==="file:"){
-    hideYoutubeFrame(); showPlayer(); setDebug("YouTube embebido falla en local con file://. Se abre en pestaña nueva. Si quieres verlo dentro del panel, abre la app desde http://localhost."); window.open(url, "_blank", "noopener"); return
+  if(!embedUrl){
+    setDebug("No se pudo convertir el enlace de YouTube.")
+    return
   }
-   showPlayerLoaded(); showYoutubeFrame(embedUrl); playerSection.scrollIntoView({behavior:"smooth", block:"start"}); setDebug("Reproduciendo YouTube en el panel.")
+
+  currentPlayableTitle=title||"YouTube"
+  nowPlayingEl.textContent=title||"YouTube"
+
+  if(location.protocol==="file:"){
+    hideYoutubeFrame()
+    showPlayer()
+    setDebug("YouTube dentro de FairyPlay requiere abrir la app desde http://localhost:3000/ y no con file://")
+    return
+  }
+
+  showPlayerLoaded()
+  showYoutubeFrame(embedUrl)
+  playerSection.scrollIntoView({behavior:"smooth", block:"start"})
+  setDebug("Reproduciendo YouTube dentro del panel.")
 }
 function jumpBy(s){ if(video.classList.contains("hidden")) return; video.currentTime=Math.max(0,Math.min(video.duration||Infinity,video.currentTime+s)) }
 
@@ -2332,10 +2445,31 @@ async function openStation(item, options={}) {
   renderBrowser()
   setDebug(`URL recibida al pinchar:\n${originalUrl}`)
 
-  if (isYoutubeUrl(originalUrl)) {
+  if(isYoutubeUrl(originalUrl)){
     setLinkStatus(originalUrl, "ok")
     renderBrowser()
     playYoutubeUrl(originalUrl, item?.name || item?.title || "YouTube")
+    return
+  }
+
+  if(isGoogleDriveUrl(originalUrl)){
+    const previewUrl=getGoogleDrivePreviewUrl(originalUrl)
+
+    if(previewUrl){
+      setLinkStatus(originalUrl, "ok")
+      renderBrowser()
+      currentPlayableTitle=item?.name || item?.title || "Google Drive"
+      nowPlayingEl.textContent=item?.name || item?.title || "Google Drive"
+      showPlayerLoaded()
+      showEmbedFrame(previewUrl)
+      setDebug(`Reproduciendo Google Drive en modo preview embebido:\n${previewUrl}`)
+      return
+    }
+
+    setLinkStatus(originalUrl, "dead")
+    renderBrowser()
+    showPlayerEmpty("No se pudo abrir el vídeo de Google Drive")
+    setDebug("No se pudo construir la URL preview de Google Drive.")
     return
   }
 
@@ -2363,7 +2497,11 @@ async function openStation(item, options={}) {
     setLinkStatus(originalUrl, "dead")
     renderBrowser()
     showPlayerEmpty("Vídeo no válido o enlace muerto")
-    showManualResolve(originalUrl, item?.name || item?.title || "", item?.referer || "", item)
+
+    if(!isGoogleDriveUrl(originalUrl)){
+      showManualResolve(originalUrl, item?.name || item?.title || "", item?.referer || "", item)
+    }
+
     setDebug("No se pudo obtener una URL reproducible.")
     return
   }
@@ -2372,7 +2510,11 @@ async function openStation(item, options={}) {
     setLinkStatus(originalUrl, "dead")
     renderBrowser()
     showPlayerEmpty("No se encontró vídeo reproducible")
-    showManualResolve(originalUrl, item?.name || item?.title || "", item?.referer || "")
+
+    if(!isGoogleDriveUrl(originalUrl)){
+      showManualResolve(originalUrl, item?.name || item?.title || "", item?.referer || "")
+    }
+
     setDebug("No se pudo resolver la página a un vídeo o m3u8 reproducible.")
     return
   }
