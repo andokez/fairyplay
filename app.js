@@ -74,6 +74,7 @@ let libraries=[], currentLibraryId=null, browserStack=[], newEntryType="group"
 let pendingManualResolveUrl=""
 let pendingManualResolveTitle=""
 let pendingManualResolveReferer=""
+let pendingManualResolveItem=null
 let currentItemKey=""
 let currentPlayableTitle=""
 let controlsHideTimer=null
@@ -235,13 +236,15 @@ function hideManualResolve(){
   pendingManualResolveUrl=""
   pendingManualResolveTitle=""
   pendingManualResolveReferer=""
+  pendingManualResolveItem=null
   if(manualResolveBox) manualResolveBox.classList.add("hidden")
 }
 
-function showManualResolve(url,title,referer=""){
+function showManualResolve(url,title,referer="",item=null){
   pendingManualResolveUrl=url||""
   pendingManualResolveTitle=title||""
   pendingManualResolveReferer=referer||""
+  pendingManualResolveItem=item||null
   if(manualResolveBox) manualResolveBox.classList.remove("hidden")
 }
 function hideYoutubeFrame(){ if(youtubeFrame){ youtubeFrame.classList.add("hidden"); youtubeFrame.removeAttribute("src") } video.classList.remove("hidden"); clickLayer.classList.remove("hidden"); leftHit.classList.remove("hidden"); rightHit.classList.remove("hidden") }
@@ -566,7 +569,18 @@ function tryRepairJsonAtError(text, errorMessage){
 }
 
 function parseLibraryText(text){
-  const payload=extractLikelyJsonPayload(text)
+  const raw=String(text||"")
+  const trimmed=raw.trim()
+
+  if(/^#EXTM3U/i.test(trimmed) || /^#EXTINF:/mi.test(trimmed)){
+    return {
+      ok:true,
+      data:raw,
+      error:"Lista M3U detectada e interpretada automáticamente."
+    }
+  }
+
+  const payload=extractLikelyJsonPayload(raw)
   const attempts=[]
   const push=(label, value)=>{
     if(typeof value==="string" && value && !attempts.some(x=>x.value===value)){
@@ -574,7 +588,7 @@ function parseLibraryText(text){
     }
   }
 
-  push("original", text)
+  push("original", raw)
   push("payload", payload)
   push("normalizado", normalizeBrokenJsonLikeText(payload))
   push("normalizado-2", normalizeBrokenJsonLikeText(normalizeBrokenJsonLikeText(payload)))
@@ -601,7 +615,7 @@ function parseLibraryText(text){
     }
   }
 
-  return { ok:false, data:null, error:lastError || "JSON inválido" }
+  return { ok:false, data:null, error:lastError || "Formato no soportado" }
 }
 function makeItemKey(item){
   if(!item) return ""
@@ -1403,25 +1417,9 @@ function playYoutubeUrl(url,title){
    showPlayerLoaded(); showYoutubeFrame(embedUrl); playerSection.scrollIntoView({behavior:"smooth", block:"start"}); setDebug("Reproduciendo YouTube en el panel.")
 }
 function jumpBy(s){ if(video.classList.contains("hidden")) return; video.currentTime=Math.max(0,Math.min(video.duration||Infinity,video.currentTime+s)) }
-async function togglePlay(){
-  if(video.classList.contains("hidden")) return
 
 async function togglePlay(){
   if(video.classList.contains("hidden")) return
-
-  if(video.paused){
-    try{
-      video.muted = false
-      if(audioCtx && audioCtx.state === "suspended"){
-        await audioCtx.resume()
-      }
-      applyVolume()
-      await video.play()
-    }catch{}
-  } else {
-    video.pause()
-  }
-}
 
   if(video.paused){
     try{
@@ -1463,11 +1461,281 @@ function updatePlayLabel(){ playPauseBtn.textContent=video.paused?"▶":"❚❚"
 function updateFullscreenLabel(){ fullscreenBtn.textContent=document.fullscreenElement?"🡼":"⛶" }
 function format(s){ if(!isFinite(s))return"00:00"; s=Math.floor(s||0); const h=Math.floor(s/3600), m=Math.floor((s%3600)/60), sec=s%60; if(h>0)return String(h).padStart(2,"0")+":"+String(m).padStart(2,"0")+":"+String(sec).padStart(2,"0"); return String(m).padStart(2,"0")+":"+String(sec).padStart(2,"0") }
 
-function normalizeImportedData(raw){
-  if(raw && Array.isArray(raw.groups)) return raw
-  if(Array.isArray(raw)){
-    return {name:"Biblioteca importada", image:"", author:"", url:"", groups:[{name:"Lista", image:"", groups:[], stations:raw.map(it=>({name:it.title||it.name||"Sin título", image:it.image||it.img||"", url:it.url||"", import:!!it.import, embed:isEmbedStation(it)}))}]}
+function parseM3uAttributes(text){
+  const out={}
+  const src=String(text||"")
+  const re=/([A-Za-z0-9_-]+)="([^"]*)"/g
+  let m
+  while((m=re.exec(src))){
+    out[m[1].toLowerCase()]=m[2]
   }
+  return out
+}
+
+function parsePossibleClearKey(value){
+  const raw=String(value||"").trim()
+  if(!raw) return null
+
+  const tryJson=safeJsonParse(raw)
+  if(tryJson.ok && tryJson.data && typeof tryJson.data==="object" && !Array.isArray(tryJson.data)){
+    const keys={}
+    for(const [kid,key] of Object.entries(tryJson.data)){
+      const cleanKid=normalizeDrmHex(kid)
+      const cleanKey=normalizeDrmHex(key)
+      if(cleanKid && cleanKey) keys[cleanKid]=cleanKey
+    }
+    return Object.keys(keys).length ? keys : null
+  }
+
+  if(raw.includes(":")){
+    const idx=raw.indexOf(":")
+    const kid=normalizeDrmHex(raw.slice(0, idx))
+    const key=normalizeDrmHex(raw.slice(idx+1))
+    if(kid && key) return { [kid]: key }
+  }
+
+  return null
+}
+
+function parseKodiStreamHeaders(value){
+  const raw=String(value||"").trim()
+  if(!raw) return { userAgent:"", referer:"", headers:{} }
+
+  const outHeaders={}
+  let userAgent=""
+  let referer=""
+
+  for(const part of raw.split("&")){
+    const chunk=String(part||"").trim()
+    if(!chunk) continue
+
+    const idx=chunk.indexOf("=")
+    if(idx<0) continue
+
+    const rawKey=chunk.slice(0, idx).trim()
+    const rawValue=chunk.slice(idx + 1).trim()
+
+    if(!rawKey || !rawValue) continue
+
+    const keyLower=rawKey.toLowerCase()
+
+    if(keyLower==="user-agent"){
+      userAgent=rawValue
+      continue
+    }
+
+    if(keyLower==="referer" || keyLower==="referrer"){
+      referer=rawValue
+      continue
+    }
+
+    outHeaders[rawKey]=rawValue
+  }
+
+  return {
+    userAgent,
+    referer,
+    headers: outHeaders
+  }
+}
+
+function parseM3uText(text, sourceUrl=""){
+  const lines=String(text||"").replace(/^\uFEFF/, "").split(/\r?\n/)
+  const groupsMap=new Map()
+
+  const getGroup=(name)=>{
+    const groupName=String(name||"Sin grupo").trim() || "Sin grupo"
+    if(!groupsMap.has(groupName)){
+      groupsMap.set(groupName, {
+        name: groupName,
+        image: "",
+        groups: [],
+        stations: []
+      })
+    }
+    return groupsMap.get(groupName)
+  }
+
+  let pending=null
+
+  const flushPendingWithUrl=(urlLine)=>{
+    const finalUrl=String(urlLine||"").trim()
+    if(!pending || !finalUrl) return
+
+    const group=getGroup(pending.groupTitle || "Sin grupo")
+
+    const item={
+      name: pending.name || "Sin título",
+      image: pending.image || "",
+      url: finalUrl
+    }
+
+    if(pending.info) item.info=pending.info
+    if(pending.import) item.import=true
+    if(pending.embed) item.embed=true
+    if(pending.referer) item.referer=pending.referer
+    if(pending.userAgent) item.userAgent=pending.userAgent
+    if(pending.headers && Object.keys(pending.headers).length) item.headers=pending.headers
+
+    if(pending.drmKeys && Object.keys(pending.drmKeys).length){
+      item.drm={ clearkey: pending.drmKeys }
+      const drmEntries=Object.entries(pending.drmKeys)
+      if(drmEntries.length===1){
+        item.kid=drmEntries[0][0]
+        item.key=drmEntries[0][1]
+      }
+    }
+
+    if(needsResolution(finalUrl)) item.isHost=true
+
+    group.stations.push(item)
+    pending=null
+  }
+
+  for(let i=0;i<lines.length;i++){
+    const rawLine=String(lines[i]||"")
+    const line=rawLine.trim()
+    if(!line) continue
+
+    if(line.startsWith("#EXTM3U")) continue
+
+    if(line.startsWith("#EXTINF:")){
+      const afterPrefix=line.slice(8)
+      const commaIdx=afterPrefix.lastIndexOf(",")
+      const attrsPart=commaIdx>=0 ? afterPrefix.slice(0, commaIdx) : afterPrefix
+      const namePart=commaIdx>=0 ? afterPrefix.slice(commaIdx+1).trim() : ""
+
+      const attrs=parseM3uAttributes(attrsPart)
+
+      pending={
+        name: namePart || attrs["tvg-name"] || "Sin título",
+        image: attrs["tvg-logo"] || "",
+        groupTitle: attrs["group-title"] || "Sin grupo",
+        info: "",
+        headers: {},
+        referer: "",
+        userAgent: "",
+        drmKeys: null,
+        import: false,
+        embed: false
+      }
+      continue
+    }
+
+    if(!pending) continue
+
+    if(line.startsWith("#EXTGRP:")){
+      pending.groupTitle=String(line.slice(8)||"").trim() || pending.groupTitle || "Sin grupo"
+      continue
+    }
+
+    if(line.startsWith("#EXTVLCOPT:")){
+      const opt=String(line.slice(11)||"").trim()
+      const idx=opt.indexOf("=")
+      if(idx>0){
+        const key=opt.slice(0, idx).trim().toLowerCase()
+        const value=opt.slice(idx+1).trim()
+        if(key==="http-user-agent"){
+          pending.userAgent=value
+        }else if(key==="http-referrer" || key==="http-referer"){
+          pending.referer=value
+        }else if(key){
+          pending.headers[key]=value
+        }
+      }
+      continue
+    }
+
+    if(line.startsWith("#KODIPROP:")){
+      const prop=String(line.slice(10)||"").trim()
+      const idx=prop.indexOf("=")
+      if(idx>0){
+        const key=prop.slice(0, idx).trim().toLowerCase()
+        const value=prop.slice(idx+1).trim()
+
+        if(key==="inputstream.adaptive.license_key"){
+          const drm=parsePossibleClearKey(value)
+          if(drm) pending.drmKeys=drm
+
+        }else if(key==="inputstream.adaptive.license_type"){
+          // Si es ClearKey ya lo gestionamos con drmKeys.
+          // Si fuera otro DRM, mejor guardarlo aparte pero no como header real.
+          if(!/clearkey/i.test(value)){
+            pending.info = (pending.info ? pending.info + "\n" : "") + `DRM detectado: ${value}`
+          }
+
+        }else if(key==="inputstream.adaptive.stream_headers"){
+          const parsed=parseKodiStreamHeaders(value)
+
+          if(parsed.userAgent && !pending.userAgent){
+            pending.userAgent=parsed.userAgent
+          }
+
+          if(parsed.referer && !pending.referer){
+            pending.referer=parsed.referer
+          }
+
+          if(parsed.headers && Object.keys(parsed.headers).length){
+            pending.headers={
+              ...(pending.headers||{}),
+              ...parsed.headers
+            }
+          }
+
+        }else{
+          // El resto de KODIPROP mejor guardarlo como info técnica,
+          // no como header HTTP inventado.
+          pending.info = (pending.info ? pending.info + "\n" : "") + `${key}: ${value}`
+        }
+      }
+      continue
+    }
+
+    if(line.startsWith("#")) continue
+
+    flushPendingWithUrl(line)
+  }
+
+  const groups=[...groupsMap.values()]
+  if(!groups.length) return null
+
+  return {
+    name: "Biblioteca importada",
+    image: "",
+    author: "",
+    url: sourceUrl || "",
+    groups
+  }
+}
+
+function normalizeImportedData(raw, sourceUrl=""){
+  if(raw && Array.isArray(raw.groups)) return raw
+
+  if(Array.isArray(raw)){
+    return {
+      name:"Biblioteca importada",
+      image:"",
+      author:"",
+      url:sourceUrl||"",
+      groups:[{
+        name:"Lista",
+        image:"",
+        groups:[],
+        stations:raw.map(it=>({
+          name:it.title||it.name||"Sin título",
+          image:it.image||it.img||"",
+          url:it.url||"",
+          import:!!it.import,
+          embed:isEmbedStation(it)
+        }))
+      }]
+    }
+  }
+
+  if(typeof raw==="string"){
+    return parseM3uText(raw, sourceUrl)
+  }
+
   return null
 }
 function extractLikelyJsonPayload(text){
@@ -1597,15 +1865,26 @@ async function persistLibrariesNow(){ return await queueSaveLibraries() }
 
 async function importFromText(text, sourceUrl=""){
   const parsed=parseLibraryText(text)
-  if(!parsed.ok){ setDebug(`JSON inválido.\n${parsed.error||"Error desconocido"}`); return false }
+  if(!parsed.ok){ setDebug(`Formato inválido.\n${parsed.error||"Error desconocido"}`); return false }
   if(parsed.error) setDebug(parsed.error)
-  const data=normalizeImportedData(parsed.data)
-  if(!data){ setDebug("JSON inválido o sin groups."); return false }
-  const lib={id:uuid(), title:tryMakeLibraryTitle(data), author:data.author||"", image:data.image||data.img||"", sourceUrl:sourceUrlFromData(data, sourceUrl), data}
+
+  const data=normalizeImportedData(parsed.data, sourceUrl)
+  if(!data){ setDebug("No se pudo interpretar la lista importada."); return false }
+
+  const lib={
+    id:uuid(),
+    title:tryMakeLibraryTitle(data),
+    author:data.author||"",
+    image:data.image||data.img||"",
+    sourceUrl:sourceUrlFromData(data, sourceUrl),
+    data
+  }
+
   libraries=[...libraries, lib]
   currentLibraryId=lib.id
   browserStack=[lib.data]
-  renderLibraryList(); renderBrowser()
+  renderLibraryList()
+  renderBrowser()
   await persistLibrariesNow()
   setDebug(parsed.error||"Biblioteca importada.")
   return true
@@ -1979,7 +2258,7 @@ async function openStation(item, options={}) {
   if (isEmbedStation(item)) {
     const resolved = await resolveStreamUrlManual(originalUrl, item?.referer || "")
     if (!resolved) {
-      showManualResolve(originalUrl, item?.name || item?.title || "", item?.referer || "")
+      showManualResolve(originalUrl, item?.name || item?.title || "", item?.referer || "", item)
       setDebug(`URL recibida al pinchar:\n${originalUrl}\n\nEste enlace está marcado como embed.\nSe abrió la resolución manual para captcha / continue.`)
       return
     }
@@ -2000,7 +2279,7 @@ async function openStation(item, options={}) {
     setLinkStatus(originalUrl, "dead")
     renderBrowser()
     showPlayerEmpty("Vídeo no válido o enlace muerto")
-    showManualResolve(originalUrl, item?.name || item?.title || "", item?.referer || "")
+    showManualResolve(originalUrl, item?.name || item?.title || "", item?.referer || "", item)
     setDebug("No se pudo obtener una URL reproducible.")
     return
   }
@@ -2487,7 +2766,7 @@ on(manualResolveBtn,"click",async ()=>{
     return
   }
 
-  playUrl(resolved, pendingManualResolveTitle || "Reproduciendo")
+  playUrl(resolved, pendingManualResolveTitle || "Reproduciendo", pendingManualResolveItem)
 })
 on(infoToggleBtn,"click",()=>toggleCurrentInfo())
 on(debugToggleBtn,"click",()=>toggleDebugPanel())
