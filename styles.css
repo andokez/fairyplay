@@ -19,6 +19,14 @@ h2{font-size:18px;margin:0 0 10px}
 .check{display:flex;gap:8px;align-items:center;margin-top:12px}
 .hint{font-size:12px;color:#aaa;margin-top:8px}
 .compact{margin-bottom:16px}
+.editor-fold{margin-top:12px;border:1px solid #2f2f2f;border-radius:10px;background:#121212;overflow:hidden}
+.editor-fold-summary{cursor:pointer;list-style:none;padding:12px 14px;font-size:14px;color:#cfcfcf;user-select:none}
+.editor-fold-summary::-webkit-details-marker{display:none}
+.editor-fold-summary::before{content:"▸";display:inline-block;margin-right:8px;transition:transform .15s ease}
+.editor-fold[open] .editor-fold-summary::before{transform:rotate(90deg)}
+.editor-fold-body{padding:0 12px 12px}
+.editor-fold-body .input:first-child,
+.editor-fold-body .textarea:first-child{margin-top:2px}
 
 .app.sidebar-collapsed{grid-template-columns:56px 1fr}
 .app.sidebar-collapsed .sidebar{padding:18px 8px;overflow:hidden}
@@ -364,3 +372,6 @@ transition:opacity .18s ease, transform .18s ease
   word-break:break-word;
   margin:10px 0 0;
 }
+.url-editor-head{align-items:center;margin-bottom:8px}
+.url-entry-row{align-items:center;margin-bottom:8px}
+.url-entry-row .btn{flex:0 0 auto}

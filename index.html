@@ -51,27 +51,47 @@
   <label class="label">Imagen</label>
   <input id="entryImageInput" class="input" type="text" placeholder="https://..." />
 
-  <label class="label">Info / sinopsis</label>
-  <textarea id="entryInfoInput" class="input textarea" rows="5" placeholder="Sinopsis, ficha, notas..."></textarea>
+  <details class="editor-fold">
+    <summary class="editor-fold-summary">Info / sinopsis</summary>
+    <div class="editor-fold-body">
+      <textarea id="entryInfoInput" class="input textarea" rows="5" placeholder="Sinopsis, ficha, notas..."></textarea>
+    </div>
+  </details>
 
   <div id="videoFields" style="display:none;">
-    <label class="label">URL del vídeo o lista</label>
-    <input id="entryUrlInput" class="input" type="text" placeholder=".mp4 / .m3u8 / .mpd / URL de lista" />
+    <div class="row url-editor-head">
+      <label class="label grow" style="margin:0;">URL</label>
+      <button id="addUrlFieldBtn" class="btn small" type="button">+ Añadir URL</button>
+    </div>
+
+    <div id="entryUrlFields">
+      <div class="row url-entry-row">
+        <input id="entryUrlInput" class="input grow entry-url-input" type="text" placeholder=".mp4 / .m3u8 / .mpd / URL de lista" />
+        <button class="btn small remove-url-field hidden" type="button">✕</button>
+      </div>
+    </div>
 
     <label class="label">Referer</label>
     <input id="entryRefererInput" class="input" type="text" placeholder="https://host.com" />
-	
-	<label class="label">User-Agent (opcional)</label>
-<input id="entryUserAgentInput" class="input" type="text"
-placeholder="Mozilla/5.0 ..." />
 
-<label class="label">Headers extra (opcional)</label>
-<textarea id="entryHeadersInput" class="input textarea" rows="5" placeholder="web-token: eyJ...&#10;origin: https://www.web.com&#10;x-algo: valor"></textarea>
-<p class="hint">Una línea por header, en formato <b>nombre:valor</b>. Ejemplo: <b>web-token: TU_TOKEN</b></p>
+    <label class="label">User-Agent (opcional)</label>
+    <input id="entryUserAgentInput" class="input" type="text" placeholder="Mozilla/5.0 ..." />
 
-<label class="label">DRM ClearKey (opcional)</label>
-<textarea id="entryDrmKeysInput" class="input textarea" rows="4" placeholder="kid1:key1&#10;kid2:key2&#10;kid3:key3"></textarea>
-<p class="hint">Una línea por clave, en formato <b>kid:key</b></p>
+    <details class="editor-fold">
+      <summary class="editor-fold-summary">Headers extra (opcional)</summary>
+      <div class="editor-fold-body">
+        <textarea id="entryHeadersInput" class="input textarea" rows="5" placeholder="web-token: eyJ...&#10;origin: https://www.web.com&#10;x-algo: valor"></textarea>
+        <p class="hint">Una línea por header, en formato <b>nombre:valor</b>. Ejemplo: <b>web-token: TU_TOKEN</b></p>
+      </div>
+    </details>
+
+    <details class="editor-fold">
+      <summary class="editor-fold-summary">DRM ClearKey (opcional)</summary>
+      <div class="editor-fold-body">
+        <textarea id="entryDrmKeysInput" class="input textarea" rows="4" placeholder="kid1:key1&#10;kid2:key2&#10;kid3:key3"></textarea>
+        <p class="hint">Una línea por clave, en formato <b>kid:key</b></p>
+      </div>
+    </details>
 
     <label class="check">
       <input id="entryImportToggle" type="checkbox" />

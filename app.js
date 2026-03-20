@@ -21,7 +21,9 @@ const videoFields=$("videoFields")
 const entryNameInput=$("entryNameInput")
 const entryImageInput=$("entryImageInput")
 const entryInfoInput=$("entryInfoInput")
+const entryUrlFields=$("entryUrlFields")
 const entryUrlInput=$("entryUrlInput")
+const addUrlFieldBtn=$("addUrlFieldBtn")
 const entryRefererInput=$("entryRefererInput")
 const entryUserAgentInput=$("entryUserAgentInput")
 const entryHeadersInput=$("entryHeadersInput")
@@ -89,6 +91,8 @@ let browserSearchTerm=""
 let currentInfoText=""
 let currentInfoExpanded=false
 let debugExpanded=false
+let openRequestSeq=0
+let activeOpenRequestId=0
 
 const SETTINGS_KEY="player_v14_settings"
 const PROGRESS_KEY="player_v14_progress"
@@ -297,7 +301,7 @@ function getResolveCache(url){
   }
   return item
 }
-function setResolveCache(url, resolvedUrl, ttlMs=6*60*60*1000){
+function setResolveCache(url, resolvedUrl, ttlMs=10*60*1000){
   const key=String(url||"").trim()
   const clean=String(resolvedUrl||"").trim()
   if(!key || !clean) return
@@ -651,6 +655,162 @@ function makeItemKey(item){
 }
 function isCurrentItem(item){ return !!currentItemKey && makeItemKey(item)===currentItemKey }
 
+function createUrlFieldRow(value=""){
+  const row=document.createElement("div")
+  row.className="row url-entry-row"
+  row.innerHTML=`<input class="input grow entry-url-input" type="text" placeholder=".mp4 / .m3u8 / .mpd / URL de lista" value="${escapeHtml(value)}" />
+<button class="btn small remove-url-field" type="button">✕</button>`
+
+  row.querySelector(".remove-url-field")?.addEventListener("click", ()=>{
+    row.remove()
+    ensureAtLeastOneUrlField()
+    syncUrlFieldButtons()
+  })
+
+  return row
+}
+
+function getEditorUrlInputs(){
+  return Array.from(entryUrlFields?.querySelectorAll(".entry-url-input") || [])
+}
+
+function getVideoUrlsFromEditor(){
+  return getEditorUrlInputs()
+    .map(input => String(input.value||"").trim())
+    .filter(Boolean)
+}
+
+function ensureAtLeastOneUrlField(){
+  if(!entryUrlFields) return
+  if(entryUrlFields.querySelector(".entry-url-input")) return
+
+  const row=document.createElement("div")
+  row.className="row url-entry-row"
+  row.innerHTML=`<input id="entryUrlInput" class="input grow entry-url-input" type="text" placeholder=".mp4 / .m3u8 / .mpd / URL de lista" />
+<button class="btn small remove-url-field hidden" type="button">✕</button>`
+
+  row.querySelector(".remove-url-field")?.addEventListener("click", ()=>{
+    row.remove()
+    ensureAtLeastOneUrlField()
+    syncUrlFieldButtons()
+  })
+
+  entryUrlFields.appendChild(row)
+}
+
+function syncUrlFieldButtons(){
+  const rows=Array.from(entryUrlFields?.querySelectorAll(".url-entry-row") || [])
+  const canRemove=rows.length>1
+
+  rows.forEach(row=>{
+    row.querySelector(".remove-url-field")?.classList.toggle("hidden", !canRemove)
+  })
+}
+
+function setVideoUrlsInEditor(urls=[]){
+  if(!entryUrlFields) return
+
+  const values=(Array.isArray(urls) ? urls : [])
+    .map(v => String(v||"").trim())
+    .filter(Boolean)
+
+  entryUrlFields.innerHTML=""
+
+  const finalValues=values.length ? values : [""]
+
+  finalValues.forEach(value=>{
+    entryUrlFields.appendChild(createUrlFieldRow(value))
+  })
+
+  syncUrlFieldButtons()
+}
+
+function appendVideoUrlField(value=""){
+  if(!entryUrlFields) return
+  entryUrlFields.appendChild(createUrlFieldRow(value))
+  syncUrlFieldButtons()
+}
+
+function getItemSourceEntries(item){
+  const entries=[]
+  const baseUrl=String(item?.url||"").trim()
+
+  if(baseUrl){
+    entries.push({
+      key:"url",
+      index:0,
+      order:1,
+      label:"Servidor 1",
+      url:baseUrl
+    })
+  }
+
+  Object.keys(item||{})
+    .map(key=>{
+      const m=String(key).match(/^url(\d+)$/i)
+      if(!m) return null
+
+      const num=Number(m[1]||0)
+      const value=String(item?.[key]||"").trim()
+      if(!num || !value) return null
+
+      return {
+        key,
+        index:num-1,
+        order:num,
+        label:`Servidor ${num}`,
+        url:value
+      }
+    })
+    .filter(Boolean)
+    .sort((a,b)=>a.order-b.order)
+    .forEach(entry=>entries.push(entry))
+
+  return entries
+}
+
+function orderItemSourceEntries(entries, preferredIndex=null, onlyPreferred=false){
+  const list=Array.isArray(entries) ? [...entries] : []
+  if(!list.length) return []
+
+  if(Number.isInteger(preferredIndex)){
+    const preferred=list.find(x=>x.index===preferredIndex)
+    if(preferred){
+      if(onlyPreferred) return [preferred]
+      return [preferred, ...list.filter(x=>x.index!==preferredIndex)]
+    }
+  }
+
+  return list
+}
+
+function getServerMenuButtonsHtml(item){
+  const entries=getItemSourceEntries(item)
+  if(entries.length<=1) return ""
+  return entries.map(entry =>
+    `<button class="btn small choose-server" data-server-index="${entry.index}" type="button">${escapeHtml(entry.label)}</button>`
+  ).join("")
+}
+
+function startOpenRequest(){
+  const requestId=++openRequestSeq
+  activeOpenRequestId=requestId
+
+  try{ video.pause() }catch{}
+  try{ video.removeAttribute("src") }catch{}
+  try{ video.load() }catch{}
+
+  hideManualResolve()
+  hideYoutubeFrame()
+  destroyPlayers()
+
+  return requestId
+}
+
+function isOpenRequestCurrent(requestId){
+  return requestId===activeOpenRequestId
+}
+
 function clearCurrentSelection(render=true){
   if(!currentItemKey) return
   currentItemKey=""
@@ -887,7 +1047,12 @@ async function resolveStreamUrl(originalUrl, referer="") {
   if(cached?.url){
     setDebug(`Usando stream cacheado:
 ${cached.url}`)
-    return cached.url
+
+    if(needsResolution(cached.url)){
+      clearResolveCache(cacheKey)
+    }else{
+      return cached.url
+    }
   }
 
   let resolvedUrl=null
@@ -2309,7 +2474,7 @@ function fillEditorFromItem(item, kind, parentNode){
     entryNameInput.value=item?.name||""
     entryImageInput.value=item?.image||item?.img||""
     entryInfoInput.value=item?.info||""
-    entryUrlInput.value=""
+    setVideoUrlsInEditor([])
     entryRefererInput.value=""
     entryImportToggle.checked=false
     entryEmbedToggle.checked=false
@@ -2318,7 +2483,7 @@ function fillEditorFromItem(item, kind, parentNode){
     entryNameInput.value=item?.name||item?.title||""
     entryImageInput.value=item?.image||item?.img||""
     entryInfoInput.value=item?.info||""
-    entryUrlInput.value=""
+    setVideoUrlsInEditor([])
     entryRefererInput.value=""
     entryImportToggle.checked=false
     entryEmbedToggle.checked=false
@@ -2327,7 +2492,7 @@ function fillEditorFromItem(item, kind, parentNode){
     entryNameInput.value=item?.name||item?.title||""
     entryImageInput.value=item?.image||item?.img||""
     entryInfoInput.value=item?.info||""
-    entryUrlInput.value=item?.url||""
+    setVideoUrlsInEditor(getItemSourceEntries(item).map(x=>x.url))
     entryRefererInput.value=item?.referer||""
     entryUserAgentInput.value=item?.userAgent||item?.headers?.["user-agent"]||item?.headers?.["User-Agent"]||""
     entryHeadersInput.value=headersToText(item)
@@ -2347,7 +2512,7 @@ function clearEditorForm(){
   entryNameInput.value=""
   entryImageInput.value=""
   entryInfoInput.value=""
-  entryUrlInput.value=""
+  setVideoUrlsInEditor([])
   entryRefererInput.value=""
   entryUserAgentInput.value=""
   entryHeadersInput.value=""
@@ -2535,11 +2700,17 @@ function renderBreadcrumbs(){
 async function openStation(item, options={}) {
   if (item.import) { await importFromUrl(item.url); return }
 
-  const originalUrl = (item?.url || "").trim()
-  if (!originalUrl) { showPlayerEmpty("Vídeo no válido"); setDebug("No hay URL para reproducir."); return }
-  if (/^ace:\/\//i.test(originalUrl)) {
-    showPlayerEmpty("Formato AceStream no soportado aquí")
-    setDebug("AceStream no está soportado de forma nativa aquí. Solo funcionará si conviertes ese canal a una URL http(s) reproducible, por ejemplo mediante un engine/proxy externo que exponga un stream web.")
+  const sourceEntries = orderItemSourceEntries(
+    getItemSourceEntries(item),
+    Number.isInteger(options?.preferredServerIndex) ? options.preferredServerIndex : null,
+    !!options?.onlyPreferredServer
+  )
+
+  const firstSourceUrl = String(sourceEntries[0]?.url || "").trim()
+
+  if (!firstSourceUrl) {
+    showPlayerEmpty("Vídeo no válido")
+    setDebug("No hay URL para reproducir.")
     return
   }
 
@@ -2548,116 +2719,147 @@ async function openStation(item, options={}) {
     setDebug("Relanzando el mismo vídeo...")
   }
 
+  const requestId = startOpenRequest()
+
   currentItemKey = makeItemKey(item)
 
-  hideManualResolve()
-  hideYoutubeFrame()
-  destroyPlayers()
   showPlayerEmpty("Cargando o resolviendo vídeo...")
-
   nowPlayingEl.textContent = item?.name || item?.title || "Reproduciendo"
   setCurrentInfo(findNearestInfoForItem(item))
   renderBrowser()
-  setDebug(`URL recibida al pinchar:\n${originalUrl}`)
 
-  if(isYoutubeUrl(originalUrl)){
-    setLinkStatus(originalUrl, "ok")
-    renderBrowser()
-    playYoutubeUrl(originalUrl, item?.name || item?.title || "YouTube")
-    return
-  }
+  const triedLabels=[]
+  let lastManualResolveUrl=""
+  let lastManualResolveReferer=""
 
-  if(isGoogleDriveUrl(originalUrl)){
-    const previewUrl=getGoogleDrivePreviewUrl(originalUrl)
+  for(const source of sourceEntries){
+    if(!isOpenRequestCurrent(requestId)) return
 
-    if(previewUrl){
+    const originalUrl=String(source?.url || "").trim()
+    if(!originalUrl) continue
+
+    triedLabels.push(source.label)
+    lastManualResolveUrl=originalUrl
+    lastManualResolveReferer=item?.referer || ""
+
+    setDebug(`URL recibida al pinchar:\n${originalUrl}\n\nProbando ${source.label}...`)
+
+    if (/^ace:\/\//i.test(originalUrl)) {
+      setDebug(`URL recibida al pinchar:\n${originalUrl}\n\n${source.label} usa AceStream y no está soportado aquí.`)
+      continue
+    }
+
+    if(isYoutubeUrl(originalUrl)){
+      if(!isOpenRequestCurrent(requestId)) return
+      setLinkStatus(item?.url || originalUrl, "ok")
       setLinkStatus(originalUrl, "ok")
       renderBrowser()
-      currentPlayableTitle=item?.name || item?.title || "Google Drive"
-      nowPlayingEl.textContent=item?.name || item?.title || "Google Drive"
-      showPlayerLoaded()
-      showEmbedFrame(previewUrl)
-      setDebug(`Reproduciendo Google Drive en modo preview embebido:\n${previewUrl}`)
+      playYoutubeUrl(originalUrl, item?.name || item?.title || "YouTube")
       return
     }
 
-    setLinkStatus(originalUrl, "dead")
-    renderBrowser()
-    showPlayerEmpty("No se pudo abrir el vídeo de Google Drive")
-    setDebug("No se pudo construir la URL preview de Google Drive.")
-    return
-  }
+    if(isGoogleDriveUrl(originalUrl)){
+      const previewUrl=getGoogleDrivePreviewUrl(originalUrl)
 
-  if (isEmbedStation(item)) {
-    const resolved = await resolveStreamUrlManual(originalUrl, item?.referer || "")
-    if (!resolved) {
-      showManualResolve(originalUrl, item?.name || item?.title || "", item?.referer || "", item)
-      setDebug(`URL recibida al pinchar:\n${originalUrl}\n\nEste enlace está marcado como embed.\nSe abrió la resolución manual para captcha / continue.`)
-      return
-    }
-    setLinkStatus(originalUrl, "ok")
-    renderBrowser()
-    playUrl(
-      resolved,
-      item?.name || item?.title || "",
-      {
-        ...item,
-        _resolvedFromHost: true,
-        referer: item?.referer || originalUrl
+      if(!isOpenRequestCurrent(requestId)) return
+
+      if(previewUrl){
+        setLinkStatus(item?.url || originalUrl, "ok")
+        setLinkStatus(originalUrl, "ok")
+        renderBrowser()
+        currentPlayableTitle=item?.name || item?.title || "Google Drive"
+        nowPlayingEl.textContent=item?.name || item?.title || "Google Drive"
+        showPlayerLoaded()
+        showEmbedFrame(previewUrl)
+        setDebug(`Reproduciendo ${source.label} en Google Drive preview:\n${previewUrl}`)
+        return
       }
-    )
-    return
-  }
 
-  let urlToPlay = originalUrl
-
-  if (needsResolution(originalUrl)) {
-    setDebug(`🔍 Resolviendo enlace de streaming...`)
-    urlToPlay = await resolveStreamUrl(originalUrl, item?.referer || "")
-  }
-
-  if (!urlToPlay) {
-    setLinkStatus(originalUrl, "dead")
-    renderBrowser()
-    showPlayerEmpty("Vídeo no válido o enlace muerto")
-
-    if(!isGoogleDriveUrl(originalUrl)){
-      showManualResolve(originalUrl, item?.name || item?.title || "", item?.referer || "", item)
+      continue
     }
 
-    setDebug("No se pudo obtener una URL reproducible.")
-    return
-  }
+    if (isEmbedStation(item)) {
+      const resolved = await resolveStreamUrlManual(originalUrl, item?.referer || "")
 
-  if (urlToPlay === originalUrl && needsResolution(originalUrl)) {
-    setLinkStatus(originalUrl, "dead")
-    renderBrowser()
-    showPlayerEmpty("No se encontró vídeo reproducible")
+      if(!isOpenRequestCurrent(requestId)) return
 
-    if(!isGoogleDriveUrl(originalUrl)){
-      showManualResolve(originalUrl, item?.name || item?.title || "", item?.referer || "")
-    }
+      if (!resolved) {
+        if(options?.onlyPreferredServer){
+          showManualResolve(originalUrl, item?.name || item?.title || "", item?.referer || "", item)
+          setDebug(`URL recibida al pinchar:\n${originalUrl}\n\n${source.label} está marcado como embed.\nSe abrió la resolución manual para captcha / continue.`)
+          return
+        }
+        continue
+      }
 
-    setDebug("No se pudo resolver la página a un vídeo o m3u8 reproducible.")
-    return
-  }
+      setLinkStatus(item?.url || originalUrl, "ok")
+      setLinkStatus(originalUrl, "ok")
+      renderBrowser()
 
-  setLinkStatus(originalUrl, "ok")
-  renderBrowser()
-
-  const resolvedFromHost = needsResolution(originalUrl)
-
-  playUrl(
-    urlToPlay,
-    item?.name || item?.title || "",
-    resolvedFromHost
-      ? {
+      playUrl(
+        resolved,
+        item?.name || item?.title || "",
+        {
           ...item,
           _resolvedFromHost: true,
           referer: item?.referer || originalUrl
         }
-      : item
-  )
+      )
+      return
+    }
+
+    let urlToPlay = originalUrl
+
+    if (needsResolution(originalUrl)) {
+      setDebug(`🔍 Resolviendo ${source.label}...`)
+      urlToPlay = await resolveStreamUrl(originalUrl, item?.referer || "")
+      if(!isOpenRequestCurrent(requestId)) return
+    }
+
+    if (!urlToPlay) {
+      clearResolveCache(makeResolveCacheKey(originalUrl, item?.referer || ""))
+      continue
+    }
+
+    if (urlToPlay === originalUrl && needsResolution(originalUrl)) {
+      clearResolveCache(makeResolveCacheKey(originalUrl, item?.referer || ""))
+      continue
+    }
+
+    if(!isOpenRequestCurrent(requestId)) return
+
+    setLinkStatus(item?.url || originalUrl, "ok")
+    setLinkStatus(originalUrl, "ok")
+    renderBrowser()
+
+    const resolvedFromHost = needsResolution(originalUrl)
+
+    playUrl(
+      urlToPlay,
+      item?.name || item?.title || "",
+      resolvedFromHost
+        ? {
+            ...item,
+            _resolvedFromHost: true,
+            referer: item?.referer || originalUrl
+          }
+        : item
+    )
+    return
+  }
+
+  if(!isOpenRequestCurrent(requestId)) return
+
+  clearResolveCache(makeResolveCacheKey(item?.url || firstSourceUrl, item?.referer || ""))
+  setLinkStatus(item?.url || firstSourceUrl, "dead")
+  renderBrowser()
+  showPlayerEmpty("Vídeo no válido o enlace muerto")
+
+  if(!isGoogleDriveUrl(lastManualResolveUrl || firstSourceUrl)){
+    showManualResolve(lastManualResolveUrl || firstSourceUrl, item?.name || item?.title || "", lastManualResolveReferer || "", item)
+  }
+
+  setDebug(`No se pudo reproducir ninguna opción.\nProbados: ${triedLabels.join(", ") || "ninguno"}`)
 }
 function renderBrowser(){
   renderBreadcrumbs()
@@ -2847,7 +3049,7 @@ function renderBrowser(){
         '<div class="card-meta">'+escapeHtml(meta)+'</div>'+
         (item.import?'<div class="card-badge">IMPORT</div>':'')+
         (isEmbedStation(item)?'<div class="card-badge">EMBED</div>':'')+
-        '<details class="card-menu browser-item-menu"><summary class="menu-btn" type="button">⋮</summary><div class="menu-pop"><button class="btn small move-left" type="button">Mover izda</button><button class="btn small move-right" type="button">Mover dcha</button><button class="btn small edit-item" type="button">Editar</button><button class="btn small del-item" type="button">Borrar</button></div></details>'+
+        '<details class="card-menu browser-item-menu"><summary class="menu-btn" type="button">⋮</summary><div class="menu-pop"><button class="btn small move-left" type="button">Mover izda</button><button class="btn small move-right" type="button">Mover dcha</button>'+getServerMenuButtonsHtml(item)+'<button class="btn small edit-item" type="button">Editar</button><button class="btn small del-item" type="button">Borrar</button></div></details>'+
       '</div>'
 
     card.onclick=async ()=>{
@@ -2882,6 +3084,18 @@ function renderBrowser(){
       e.stopPropagation()
       moveBrowserItem(item, child.kind, "right", node)
     })
+    card.querySelectorAll(".choose-server").forEach(btn=>{
+      btn.addEventListener("click", async (e)=>{
+        e.stopPropagation()
+        closeAllLibraryMenus()
+        await openStation(item, {
+          force: true,
+          preferredServerIndex: Number(btn.dataset.serverIndex),
+          onlyPreferredServer: true
+        })
+      })
+    })
+
     card.querySelector(".edit-item")?.addEventListener("click",(e)=>{
       e.stopPropagation()
       fillEditorFromItem(item, editorKind, node)
@@ -2901,7 +3115,8 @@ async function addEntryAtCurrentNode(){
   const name=entryNameInput.value.trim()
   const image=entryImageInput.value.trim()
   const info=entryInfoInput.value.trim()
-  const url=entryUrlInput.value.trim()
+  const urls=getVideoUrlsFromEditor()
+  const url=urls[0]||""
   const referer=entryRefererInput.value.trim()
   const userAgent=entryUserAgentInput.value.trim()
   const extraHeaders=parseHeadersText(entryHeadersInput.value)
@@ -2931,11 +3146,21 @@ async function addEntryAtCurrentNode(){
       else delete editingItemRef.info
 
     }else{
-      const previousUrl=String(editingItemRef.url||"").trim()
+      if(!url){ setDebug("Pon al menos una URL."); return }
+
+      const previousUrls=getItemSourceEntries(editingItemRef).map(x=>String(x.url||"").trim()).filter(Boolean)
 
       editingItemRef.name=name
       editingItemRef.image=image
       editingItemRef.url=url
+
+      Object.keys(editingItemRef).forEach(key=>{
+        if(/^url\d+$/i.test(key)) delete editingItemRef[key]
+      })
+
+      urls.slice(1).forEach((extraUrl, idx)=>{
+        editingItemRef[`url${idx+2}`]=extraUrl
+      })
 
       if(entryImportToggle.checked) editingItemRef.import=true
       else delete editingItemRef.import
@@ -2974,17 +3199,29 @@ async function addEntryAtCurrentNode(){
         delete editingItemRef.key
       }
 
-      if(needsResolution(url)) editingItemRef.isHost=true
+      if(urls.some(u => needsResolution(u))) editingItemRef.isHost=true
       else delete editingItemRef.isHost
 
       delete editingItemRef.groups
       delete editingItemRef.stations
 
-      if(previousUrl!==url){
-        clearLinkStatus(previousUrl)
-        clearResolveCache(previousUrl)
-        clearLinkStatus(url)
-        clearResolveCache(url)
+      const currentUrls=urls.map(v=>String(v||"").trim()).filter(Boolean)
+      const changed =
+        previousUrls.length!==currentUrls.length ||
+        previousUrls.some((v, i)=>v!==currentUrls[i])
+
+      if(changed){
+        previousUrls.forEach(prevUrl=>{
+          clearLinkStatus(prevUrl)
+          clearResolveCache(prevUrl)
+          clearResolveCache(makeResolveCacheKey(prevUrl, referer))
+        })
+
+        currentUrls.forEach(nextUrl=>{
+          clearLinkStatus(nextUrl)
+          clearResolveCache(nextUrl)
+          clearResolveCache(makeResolveCacheKey(nextUrl, referer))
+        })
       }
     }
 
@@ -3015,15 +3252,19 @@ async function addEntryAtCurrentNode(){
     node.stations.push(newStation)
 
   }else{
-    if(!url){ setDebug("Pon la URL."); return }
+    if(!url){ setDebug("Pon al menos una URL."); return }
 
     const newVideo={ name, image, url }
 
-        if(entryImportToggle.checked) newVideo.import=true
-    if(entryEmbedToggle.checked) newVideo.embed=true
+    urls.slice(1).forEach((extraUrl, idx)=>{
+      newVideo[`url${idx+2}`]=extraUrl
+    })
+
     if(info) newVideo.info=info
     if(referer) newVideo.referer=referer
     if(userAgent) newVideo.userAgent=userAgent
+    if(entryImportToggle.checked) newVideo.import=true
+    if(entryEmbedToggle.checked) newVideo.embed=true
 
     const cleanHeaders={ ...(extraHeaders||{}) }
     if(Object.keys(cleanHeaders).length) newVideo.headers=cleanHeaders
@@ -3038,17 +3279,10 @@ async function addEntryAtCurrentNode(){
       }
     }
 
-    if(needsResolution(url)) newVideo.isHost=true
+    if(urls.some(u => needsResolution(u))) newVideo.isHost=true
 
-    if(isStationContainer(node)){
-      if(!Array.isArray(node.stations)) node.stations=[]
-      clearLinkStatus(url)
-      clearResolveCache(url)
-      node.stations.push(newVideo)
-    }else{
-      setDebug("Los vídeos se crean dentro de una station.")
-      return
-    }
+    if(!Array.isArray(node.stations)) node.stations=[]
+    node.stations.push(newVideo)
   }
 
   renderLibraryList()
@@ -3063,6 +3297,10 @@ function setEntryType(type){
   typeStationBtn.classList.toggle("active-toggle", type==="station")
   typeVideoBtn.classList.toggle("active-toggle", type==="video")
   videoFields.style.display = type==="video" ? "" : "none"
+  if(type==="video"){
+    ensureAtLeastOneUrlField()
+    syncUrlFieldButtons()
+  }
 }
 function saveResolverConfig(){
   RESOLVER_CONFIG.backendUrl=normalizeBackendUrl(RESOLVER_CONFIG.backendUrl)
@@ -3111,6 +3349,7 @@ on(sidebarToggleBtn,"click",()=>setSidebarCollapsed(!appRoot?.classList.contains
 on(typeGroupBtn,"click",()=>setEntryType("group"))
 on(typeStationBtn,"click",()=>setEntryType("station"))
 on(typeVideoBtn,"click",()=>setEntryType("video"))
+on(addUrlFieldBtn,"click",()=>appendVideoUrlField(""))
 on(addEntryBtn,"click",()=>{ addEntryAtCurrentNode() })
 on(manualResolveBtn,"click",async ()=>{
   if(!pendingManualResolveUrl){
