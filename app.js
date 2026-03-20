@@ -1227,17 +1227,39 @@ async function playUrl(url,title,item=null){
     const shouldProxyGoogleHostedMedia =
       isGoogleHostedMediaUrl(originalUrl)
 
+    const shouldProxyResolvedHostMedia =
+      !!item?._resolvedFromHost ||
+      !!item?.isHost ||
+      !!item?.embed
+
+    const shouldProxyHls =
+      type==="hls" &&
+      (
+        shouldProxyResolvedHostMedia ||
+        Object.keys(explicitProxyHeaders).length>0
+      )
+
+    const shouldProxyFile =
+      type==="file" &&
+      shouldProxyResolvedHostMedia
+
     if(shouldProxyDash){
       playbackUrl=buildBackendMediaProxyUrl(originalUrl, item)
       setDebug(`Reproduciendo MPD vía proxy:\n${playbackUrl}`)
     }else if(shouldProxyGoogleHostedMedia){
       playbackUrl=buildBackendMediaProxyUrl(originalUrl, item)
       setDebug(`Reproduciendo Google media vía proxy:\n${playbackUrl}`)
+    }else if(shouldProxyHls){
+      playbackUrl=buildBackendMediaProxyUrl(originalUrl, item)
+      setDebug(`Reproduciendo HLS vía proxy:\n${playbackUrl}`)
+    }else if(shouldProxyFile){
+      playbackUrl=buildBackendMediaProxyUrl(originalUrl, item)
+      setDebug(`Reproduciendo archivo vía proxy:\n${playbackUrl}`)
     }else{
       setDebug(`Reproduciendo directo:\n${originalUrl}`)
     }
 
-        if(type==="dash"){
+    if(type==="dash"){
       dashPlayer=dashjs.MediaPlayer().create()
 
       const dashProxyHeaders=getProxyHeadersFromItem(item, { includeImplicit:true })
@@ -2482,7 +2504,15 @@ async function openStation(item, options={}) {
     }
     setLinkStatus(originalUrl, "ok")
     renderBrowser()
-     playUrl(resolved, item?.name || item?.title || "", item)
+    playUrl(
+      resolved,
+      item?.name || item?.title || "",
+      {
+        ...item,
+        _resolvedFromHost: true,
+        referer: item?.referer || originalUrl
+      }
+    )
     return
   }
 
@@ -2521,7 +2551,20 @@ async function openStation(item, options={}) {
 
   setLinkStatus(originalUrl, "ok")
   renderBrowser()
-  playUrl(urlToPlay, item?.name || item?.title || "", item)
+
+  const resolvedFromHost = needsResolution(originalUrl)
+
+  playUrl(
+    urlToPlay,
+    item?.name || item?.title || "",
+    resolvedFromHost
+      ? {
+          ...item,
+          _resolvedFromHost: true,
+          referer: item?.referer || originalUrl
+        }
+      : item
+  )
 }
 function renderBrowser(){
   renderBreadcrumbs()
