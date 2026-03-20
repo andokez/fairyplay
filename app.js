@@ -734,7 +734,7 @@ function extractMediaCandidatesFromHtml(html, baseUrl=""){
 }
 async function frontendHtmlResolver(url){
   try{
-    setDebug(`Intentando resolver en frontend antes del backend...`)
+    setDebug(`Backend no resolvió. Intentando fallback en frontend...`)
     const response=await fetch(url, { method:'GET', mode:'cors', credentials:'include' })
     if(!response.ok) throw new Error(`HTTP ${response.status}`)
     const contentType=String(response.headers.get('content-type')||'').toLowerCase()
@@ -743,13 +743,13 @@ async function frontendHtmlResolver(url){
     if(contentType.includes('application/vnd.apple.mpegurl') || contentType.includes('application/dash+xml') || contentType.startsWith('video/')) return response.url || url
     const candidates=extractMediaCandidatesFromHtml(body, response.url || url)
     if(candidates.length){
-      setDebug(`Frontend encontró stream directo sin backend:
+      setDebug(`Frontend encontró stream directo como fallback:
 ${candidates[0]}`)
       return candidates[0]
     }
     return null
   }catch(e){
-    setDebug(`Frontend no pudo resolver sin backend (${e.message}).`)
+    setDebug(`Frontend fallback falló (${e.message}).`)
     return null
   }
 }
@@ -877,37 +877,7 @@ async function backendResolver(url, manual=false, referer="") {
     return null
   }
 }
-function shouldPreferBackendResolver(url){
-  const raw=String(url||"").trim()
-  if(!raw) return false
 
-  try{
-    const host=(new URL(raw)).hostname.toLowerCase()
-
-    return (
-      host.includes("filemoon") ||
-      host.includes("filemon") ||
-      host.includes("streamwish") ||
-      host.includes("wish") ||
-      host.includes("vidmoly") ||
-      host.includes("vidoza") ||
-      host.includes("voe") ||
-      host.includes("lulustream") ||
-      host.includes("mixdrop") ||
-      host.includes("streamtape") ||
-      host.includes("dood") ||
-      host.includes("uqload") ||
-      host.includes("vudeo") ||
-      host.includes("waaw") ||
-      host.includes("netu") ||
-      host.includes("sibnet") ||
-      host.includes("okru") ||
-      host.includes("f75s.com")
-    )
-  }catch{
-    return false
-  }
-}
 
 async function resolveStreamUrl(originalUrl, referer="") {
   if (!needsResolution(originalUrl)) return originalUrl
@@ -920,11 +890,9 @@ ${cached.url}`)
     return cached.url
   }
 
-  const preferBackendFirst=shouldPreferBackendResolver(originalUrl)
-
   let resolvedUrl=null
 
-  if(preferBackendFirst && RESOLVER_CONFIG.useBackend){
+  if(RESOLVER_CONFIG.useBackend){
     resolvedUrl = await backendResolver(originalUrl, false, referer)
     if (resolvedUrl) {
       setResolveCache(cacheKey, resolvedUrl)
@@ -932,34 +900,18 @@ ${cached.url}`)
     }
   }
 
-  if(!resolvedUrl && !preferBackendFirst){
-    resolvedUrl = await frontendHtmlResolver(originalUrl)
-    if (resolvedUrl) {
-      setResolveCache(cacheKey, resolvedUrl)
-      return resolvedUrl
-    }
-  }
-
-  if (!resolvedUrl && RESOLVER_CONFIG.useBackend) {
-    resolvedUrl = await backendResolver(originalUrl, false, referer)
-    if (resolvedUrl) {
-      setResolveCache(cacheKey, resolvedUrl)
-      return resolvedUrl
-    }
-  }
-
-  if (!resolvedUrl && !preferBackendFirst) {
-    resolvedUrl = await frontendHtmlResolver(originalUrl)
-    if (resolvedUrl) {
-      setResolveCache(cacheKey, resolvedUrl)
-      return resolvedUrl
-    }
-  }
-
-  if (!resolvedUrl && RESOLVER_CONFIG.embedResolvers) resolvedUrl = await embedResolver(originalUrl)
+  resolvedUrl = await frontendHtmlResolver(originalUrl)
   if (resolvedUrl) {
     setResolveCache(cacheKey, resolvedUrl)
     return resolvedUrl
+  }
+
+  if (!resolvedUrl && RESOLVER_CONFIG.embedResolvers) {
+    resolvedUrl = await embedResolver(originalUrl)
+    if (resolvedUrl) {
+      setResolveCache(cacheKey, resolvedUrl)
+      return resolvedUrl
+    }
   }
 
   clearResolveCache(cacheKey)
