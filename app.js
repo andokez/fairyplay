@@ -1233,6 +1233,21 @@ async function playUrl(url,title,item=null){
     const shouldProxyGoogleHostedMedia =
       isGoogleHostedMediaUrl(originalUrl)
 
+    const shouldTryProxyFallbackForFile =
+      type==="file" &&
+      (
+        !!item?._resolvedFromHost ||
+        shouldProxyGoogleHostedMedia ||
+        Object.keys(explicitProxyHeaders).length>0 ||
+        !!String(item?.referer||"").trim() ||
+        !!String(item?.userAgent||"").trim()
+      )
+
+    const proxiedFileUrl =
+      shouldTryProxyFallbackForFile
+        ? buildBackendMediaProxyUrl(originalUrl, item)
+        : ""
+
     if(shouldProxyDash){
       playbackUrl=buildBackendMediaProxyUrl(originalUrl, item)
       setDebug(`Reproduciendo MPD vía proxy:\n${playbackUrl}`)
@@ -1561,16 +1576,43 @@ async function playUrl(url,title,item=null){
       }
     }
     else {
+      if(shouldTryProxyFallbackForFile && proxiedFileUrl && proxiedFileUrl!==playbackUrl){
+        const retryViaProxy = ()=>{
+          video.removeEventListener("error", retryViaProxy)
+
+          setDebug(`Directo falló, reintentando vía proxy:\n${proxiedFileUrl}`)
+
+          video.src=proxiedFileUrl
+          video.load()
+          video.play().catch((err)=>{
+            try{
+              setDebug((debugEl?.textContent ? debugEl.textContent + "\n" : "") + `PLAY ERROR:\n${err?.message || err}`)
+            }catch{}
+          })
+        }
+
+        video.addEventListener("error", retryViaProxy, { once:true })
+      }
+
       video.src=playbackUrl
     }
 
-    await ensureAudioBoost()
+    const shouldUseAudioBoost =
+      type==="hls" || type==="dash"
 
-    try{
-      if(audioCtx && audioCtx.state === "suspended"){
-        await audioCtx.resume()
-      }
-    }catch{}
+    if(shouldUseAudioBoost){
+      await ensureAudioBoost()
+
+      try{
+        if(audioCtx && audioCtx.state === "suspended"){
+          await audioCtx.resume()
+        }
+      }catch{}
+    }else{
+      try{
+        if(gainNode) gainNode.gain.value = 1
+      }catch{}
+    }
 
     video.muted = false
     applyVolume()
@@ -1653,7 +1695,25 @@ async function ensureAudioBoost(){
     setDebug("Boost no disponible en este navegador.")
   }
 }
-function applyVolume(){ const percent=Number(volumeRange.value)||100; volumeLabel.textContent=percent+"%"; const boostAllowed=boostToggle.checked; if(percent<=100){ video.volume=percent/100; if(gainNode)gainNode.gain.value=1 } else { video.volume=1; if(gainNode)gainNode.gain.value=boostAllowed ? percent/100 : 1 } updateMuteLabel() }
+function applyVolume(){
+  const percent=Number(volumeRange.value)||100
+  volumeLabel.textContent=percent+"%"
+
+  const boostAllowed=boostToggle.checked
+  const currentSrc=String(video?.currentSrc || video?.src || "").toLowerCase()
+  const isAdaptive=currentSrc.includes(".m3u8") || currentSrc.includes(".mpd")
+  const canBoostNow=boostAllowed && isAdaptive
+
+  if(percent<=100){
+    video.volume=percent/100
+    if(gainNode) gainNode.gain.value=1
+  }else{
+    video.volume=1
+    if(gainNode) gainNode.gain.value=canBoostNow ? percent/100 : 1
+  }
+
+  updateMuteLabel()
+}
 function showVolumePanel(){ volumeWrap.classList.add("show") }
 function hideVolumePanelSoon(){ setTimeout(()=>{ if(!volumeWrap.matches(":hover") && document.activeElement!==volumeRange){ volumeWrap.classList.remove("show") } },180) }
 function updateMuteLabel(){ const effectiveMuted = video.muted || Number(volumeRange.value)===0; muteBtn.textContent = effectiveMuted ? "🔇" : "🔊" }
