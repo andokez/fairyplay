@@ -877,6 +877,38 @@ async function backendResolver(url, manual=false, referer="") {
     return null
   }
 }
+function shouldPreferBackendResolver(url){
+  const raw=String(url||"").trim()
+  if(!raw) return false
+
+  try{
+    const host=(new URL(raw)).hostname.toLowerCase()
+
+    return (
+      host.includes("filemoon") ||
+      host.includes("filemon") ||
+      host.includes("streamwish") ||
+      host.includes("wish") ||
+      host.includes("vidmoly") ||
+      host.includes("vidoza") ||
+      host.includes("voe") ||
+      host.includes("lulustream") ||
+      host.includes("mixdrop") ||
+      host.includes("streamtape") ||
+      host.includes("dood") ||
+      host.includes("uqload") ||
+      host.includes("vudeo") ||
+      host.includes("waaw") ||
+      host.includes("netu") ||
+      host.includes("sibnet") ||
+      host.includes("okru") ||
+      host.includes("f75s.com")
+    )
+  }catch{
+    return false
+  }
+}
+
 async function resolveStreamUrl(originalUrl, referer="") {
   if (!needsResolution(originalUrl)) return originalUrl
 
@@ -888,14 +920,36 @@ ${cached.url}`)
     return cached.url
   }
 
-  let resolvedUrl = await frontendHtmlResolver(originalUrl)
-  if (resolvedUrl) {
-    setResolveCache(cacheKey, resolvedUrl)
-    return resolvedUrl
+  const preferBackendFirst=shouldPreferBackendResolver(originalUrl)
+
+  let resolvedUrl=null
+
+  if(preferBackendFirst && RESOLVER_CONFIG.useBackend){
+    resolvedUrl = await backendResolver(originalUrl, false, referer)
+    if (resolvedUrl) {
+      setResolveCache(cacheKey, resolvedUrl)
+      return resolvedUrl
+    }
+  }
+
+  if(!resolvedUrl && !preferBackendFirst){
+    resolvedUrl = await frontendHtmlResolver(originalUrl)
+    if (resolvedUrl) {
+      setResolveCache(cacheKey, resolvedUrl)
+      return resolvedUrl
+    }
   }
 
   if (!resolvedUrl && RESOLVER_CONFIG.useBackend) {
     resolvedUrl = await backendResolver(originalUrl, false, referer)
+    if (resolvedUrl) {
+      setResolveCache(cacheKey, resolvedUrl)
+      return resolvedUrl
+    }
+  }
+
+  if (!resolvedUrl && !preferBackendFirst) {
+    resolvedUrl = await frontendHtmlResolver(originalUrl)
     if (resolvedUrl) {
       setResolveCache(cacheKey, resolvedUrl)
       return resolvedUrl
@@ -1227,39 +1281,17 @@ async function playUrl(url,title,item=null){
     const shouldProxyGoogleHostedMedia =
       isGoogleHostedMediaUrl(originalUrl)
 
-    const shouldProxyResolvedHostMedia =
-      !!item?._resolvedFromHost ||
-      !!item?.isHost ||
-      !!item?.embed
-
-    const shouldProxyHls =
-      type==="hls" &&
-      (
-        shouldProxyResolvedHostMedia ||
-        Object.keys(explicitProxyHeaders).length>0
-      )
-
-    const shouldProxyFile =
-      type==="file" &&
-      shouldProxyResolvedHostMedia
-
     if(shouldProxyDash){
       playbackUrl=buildBackendMediaProxyUrl(originalUrl, item)
       setDebug(`Reproduciendo MPD vía proxy:\n${playbackUrl}`)
     }else if(shouldProxyGoogleHostedMedia){
       playbackUrl=buildBackendMediaProxyUrl(originalUrl, item)
       setDebug(`Reproduciendo Google media vía proxy:\n${playbackUrl}`)
-    }else if(shouldProxyHls){
-      playbackUrl=buildBackendMediaProxyUrl(originalUrl, item)
-      setDebug(`Reproduciendo HLS vía proxy:\n${playbackUrl}`)
-    }else if(shouldProxyFile){
-      playbackUrl=buildBackendMediaProxyUrl(originalUrl, item)
-      setDebug(`Reproduciendo archivo vía proxy:\n${playbackUrl}`)
     }else{
       setDebug(`Reproduciendo directo:\n${originalUrl}`)
     }
 
-    if(type==="dash"){
+        if(type==="dash"){
       dashPlayer=dashjs.MediaPlayer().create()
 
       const dashProxyHeaders=getProxyHeadersFromItem(item, { includeImplicit:true })
@@ -1464,67 +1496,116 @@ async function playUrl(url,title,item=null){
       const hlsHeaders=getProxyHeadersFromItem(item, { includeImplicit:true })
       const hasHlsHeaders=Object.keys(hlsHeaders).length>0
 
+      const resolvedFromHost =
+        !!item?._resolvedFromHost ||
+        !!item?.isHost ||
+        !!item?.embed
+
       let forceHlsProxy=false
       try{
-        const u=new URL(playbackUrl)
+        const u=new URL(originalUrl)
         forceHlsProxy=!!(u.username || u.password)
       }catch{}
 
-      const shouldProxyHls=hasHlsHeaders || forceHlsProxy
+      const backendBase = normalizeBackendUrl(RESOLVER_CONFIG.backendUrl)
+        .replace(/\/resolve\/?$/, '')
+        .replace(/\/api\/?$/, '')
 
-      let hlsUrl=playbackUrl
-      if(shouldProxyHls){
-        const headersStr=Object.entries(hlsHeaders)
-          .filter(([k,v])=>k&&v)
-          .map(([k,v])=>`${k}:${v}`)
-          .join("\n")
-        const backendBase = normalizeBackendUrl(RESOLVER_CONFIG.backendUrl)
-          .replace(/\/resolve\/?$/, '')
-          .replace(/\/api\/?$/, '')
-        const params=new URLSearchParams()
-        params.set('url', playbackUrl)
-        if(headersStr) params.set('headers', headersStr)
-        hlsUrl=`${backendBase}/api/m3u8?${params.toString()}`
-        setDebug(`Reproduciendo HLS vía proxy:\n${hlsUrl}`)
-      } else {
-        setDebug(`Reproduciendo HLS directo:\n${hlsUrl}`)
+      const headersStr=Object.entries(hlsHeaders)
+        .filter(([k,v])=>k&&v)
+        .map(([k,v])=>`${k}:${v}`)
+        .join("\n")
+
+      const params=new URLSearchParams()
+      params.set('url', originalUrl)
+      if(headersStr) params.set('headers', headersStr)
+
+      const proxiedHlsUrl=`${backendBase}/api/m3u8?${params.toString()}`
+
+      const shouldAllowProxyFallback =
+        resolvedFromHost ||
+        hasHlsHeaders ||
+        forceHlsProxy
+
+      let usingProxy=false
+      let fallbackTried=false
+
+      const attachNativeFallback = ()=>{
+        if(usingProxy || !shouldAllowProxyFallback || fallbackTried) return
+        fallbackTried=true
+        usingProxy=true
+        setDebug(`HLS directo falló, reintentando vía proxy:\n${proxiedHlsUrl}`)
+        video.src=proxiedHlsUrl
+        video.load()
+        video.play().catch(()=>{})
       }
 
       if(window.Hls && Hls.isSupported()){
-        hlsPlayer=new Hls({
-          maxBufferLength: 30,
-          backBufferLength: 30,
-          maxMaxBufferLength: 60,
-          liveSyncDurationCount: 3,
-          liveMaxLatencyDurationCount: 10,
-          highBufferWatchdogPeriod: 2,
-          nudgeOffset: 0.1,
-          nudgeMaxRetry: 8,
-          fragLoadingTimeOut: 20000,
-          manifestLoadingTimeOut: 20000,
-          levelLoadingTimeOut: 20000
-        })
+        const startHls = (sourceUrl)=>{
+          hlsPlayer=new Hls({
+            maxBufferLength: 30,
+            backBufferLength: 30,
+            maxMaxBufferLength: 60,
+            liveSyncDurationCount: 3,
+            liveMaxLatencyDurationCount: 10,
+            highBufferWatchdogPeriod: 2,
+            nudgeOffset: 0.1,
+            nudgeMaxRetry: 8,
+            fragLoadingTimeOut: 20000,
+            manifestLoadingTimeOut: 20000,
+            levelLoadingTimeOut: 20000
+          })
 
-        hlsPlayer.on(Hls.Events.MANIFEST_PARSED, ()=>{
-          video.play().catch(()=>{})
-        })
+          hlsPlayer.on(Hls.Events.MANIFEST_PARSED, ()=>{
+            video.play().catch(()=>{})
+          })
 
-        hlsPlayer.on(Hls.Events.LEVEL_LOADED, ()=>{
-          video.play().catch(()=>{})
-        })
+          hlsPlayer.on(Hls.Events.LEVEL_LOADED, ()=>{
+            video.play().catch(()=>{})
+          })
 
-        hlsPlayer.on(Hls.Events.ERROR, (_event, data)=>{
-          if(data?.fatal){
-            try{
-              setDebug((debugEl?.textContent ? debugEl.textContent + "\n" : "") + `HLS ERROR:\n${JSON.stringify(data, null, 2)}`)
-            }catch{}
-          }
-        })
+          hlsPlayer.on(Hls.Events.ERROR, (_event, data)=>{
+            if(data?.fatal){
+              try{
+                setDebug((debugEl?.textContent ? debugEl.textContent + "\n" : "") + `HLS ERROR:\n${JSON.stringify(data, null, 2)}`)
+              }catch{}
 
-        hlsPlayer.loadSource(hlsUrl)
-        hlsPlayer.attachMedia(video)
+              if(!usingProxy && shouldAllowProxyFallback){
+                const fallbackByErrorType =
+                  data?.type===Hls.ErrorTypes.NETWORK_ERROR ||
+                  data?.type===Hls.ErrorTypes.MEDIA_ERROR ||
+                  data?.details===Hls.ErrorDetails.MANIFEST_LOAD_ERROR ||
+                  data?.details===Hls.ErrorDetails.MANIFEST_LOAD_TIMEOUT ||
+                  data?.details===Hls.ErrorDetails.LEVEL_LOAD_ERROR ||
+                  data?.details===Hls.ErrorDetails.LEVEL_LOAD_TIMEOUT ||
+                  data?.details===Hls.ErrorDetails.FRAG_LOAD_ERROR ||
+                  data?.details===Hls.ErrorDetails.FRAG_LOAD_TIMEOUT
+
+                if(fallbackByErrorType){
+                  fallbackTried=true
+                  usingProxy=true
+                  try{ hlsPlayer.destroy() }catch{}
+                  hlsPlayer=null
+
+                  setDebug((debugEl?.textContent ? debugEl?.textContent + "\n" : "") + `Reintentando HLS vía proxy:\n${proxiedHlsUrl}`)
+
+                  startHls(proxiedHlsUrl)
+                  return
+                }
+              }
+            }
+          })
+
+          hlsPlayer.loadSource(sourceUrl)
+          hlsPlayer.attachMedia(video)
+        }
+
+        setDebug(`Reproduciendo HLS directo:\n${originalUrl}`)
+        startHls(originalUrl)
       } else {
-        video.src=hlsUrl
+        setDebug(`Reproduciendo HLS directo:\n${originalUrl}`)
+        video.src=originalUrl
+        video.addEventListener("error", attachNativeFallback, { once:true })
       }
     }
     else {
