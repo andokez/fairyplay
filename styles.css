@@ -335,7 +335,14 @@ transition:opacity .18s ease, transform .18s ease
 .card-menu summary::-webkit-details-marker{display:none}
 .menu-pop{position:absolute;right:0;top:34px;display:flex;flex-direction:column;gap:6px;padding:8px;background:#111;border:1px solid #333;border-radius:10px;min-width:120px;z-index:20}
 .volume-panel{left:auto;right:-4px;bottom:44px;flex-direction:column;padding:12px 10px}
-.volume{width:28px;height:130px;writing-mode:bt-lr;-webkit-appearance:slider-vertical;appearance:slider-vertical}
+.volume{
+  width:28px;
+  height:130px;
+  writing-mode:vertical-lr;
+  direction:rtl;
+  -webkit-appearance:slider;
+  appearance:auto;
+}
 .player-wrap.controls-hidden .controls{opacity:0;pointer-events:none}
 .player-wrap.controls-hidden .side-hit,.player-wrap.controls-hidden .click-layer{pointer-events:auto}
 .status-dot{

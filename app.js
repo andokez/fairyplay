@@ -44,7 +44,6 @@ const addEntryBtn=$("addEntryBtn")
 const libraryList=$("libraryList")
 const autoplayToggle=$("autoplayToggle")
 const rememberToggle=$("rememberToggle")
-const boostToggle=$("boostToggle")
 const playPauseBtn=$("playPauseBtn")
 const backBtn=$("backBtn")
 const forwardBtn=$("forwardBtn")
@@ -333,7 +332,7 @@ function showYoutubeFrame(embedUrl){
   showEmbedFrame(embedUrl)
 }
 function loadSettings(){try{return JSON.parse(localStorage.getItem(SETTINGS_KEY)||"{}")}catch{return{}}}
-function saveSettings(){ const s=loadSettings(); s.autoplay=autoplayToggle.checked; s.remember=rememberToggle.checked; s.boost=boostToggle.checked; s.jumpSeconds=getJumpSeconds(); s.volumePercent=Number(volumeRange.value)||100; s.sidebarCollapsed=!!appRoot?.classList.contains("sidebar-collapsed"); localStorage.setItem(SETTINGS_KEY,JSON.stringify(s)); applyVolume() }
+function saveSettings(){ const s=loadSettings(); s.autoplay=autoplayToggle.checked; s.remember=rememberToggle.checked; s.jumpSeconds=getJumpSeconds(); s.volumePercent=Number(volumeRange.value)||100; s.sidebarCollapsed=!!appRoot?.classList.contains("sidebar-collapsed"); localStorage.setItem(SETTINGS_KEY,JSON.stringify(s)); applyVolume() }
 function loadProgressMap(){try{return JSON.parse(localStorage.getItem(PROGRESS_KEY)||"{}")}catch{return{}}}
 function saveProgress(url,time){const map=loadProgressMap(); map[url]=time; localStorage.setItem(PROGRESS_KEY,JSON.stringify(map))}
 function getProgress(url){const map=loadProgressMap(); return map[url]||0}
@@ -1941,21 +1940,21 @@ if(shouldForceProxyForResolvedHostFile && proxiedFileUrl){
       video.src=playbackUrl
     }
 
-    const shouldUseAudioBoost = true
+   const shouldUseAudioBoost = false
 
-    if(shouldUseAudioBoost){
-      await ensureAudioBoost()
+if(shouldUseAudioBoost){
+  await ensureAudioBoost()
 
-      try{
-        if(audioCtx && audioCtx.state === "suspended"){
-          await audioCtx.resume()
-        }
-      }catch{}
-    }else{
-      try{
-        if(gainNode) gainNode.gain.value = 1
-      }catch{}
+  try{
+    if(audioCtx && audioCtx.state === "suspended"){
+      await audioCtx.resume()
     }
+  }catch{}
+}else{
+  try{
+    if(gainNode) gainNode.gain.value = 1
+  }catch{}
+}
 
     video.muted = false
     applyVolume()
@@ -2042,19 +2041,11 @@ function applyVolume(){
   const percent=Number(volumeRange.value)||100
   volumeLabel.textContent=percent+"%"
 
-  const boostAllowed=boostToggle.checked
-  const canBoostNow=boostAllowed && gainNode
+video.volume = percent / 100
 
-  if(percent<=100){
-    video.volume=percent/100
-    if(gainNode) gainNode.gain.value=1
-  }else{
-    video.volume=1
-    if(gainNode){
-      const safeBoost = Math.min(percent/100, 2) // límite real 200%
-      gainNode.gain.value = canBoostNow ? safeBoost : 1
-    }
-  }
+if (gainNode) {
+  gainNode.gain.value = 1
+}
 
   updateMuteLabel()
 }
@@ -3958,7 +3949,6 @@ on(volumeRange,"focus",showVolumePanel)
 on(volumeRange,"blur",hideVolumePanelSoon)
 on(autoplayToggle,"change",saveSettings)
 on(rememberToggle,"change",saveSettings)
-on(boostToggle,"change",saveSettings)
 on(progressRange,"input",()=>{ const d=video.duration||0; video.currentTime=d*(progressRange.value/100) })
 on(playerWrap,"mousemove",showControlsTemporarily)
 on(playerWrap,"mouseleave",()=>{ if(!video.paused) playerWrap.classList.add('controls-hidden') })
@@ -3980,13 +3970,12 @@ on(leftHit,"auxclick",(e)=>middleJumpAux(e,-1,"left"))
 on(rightHit,"auxclick",(e)=>middleJumpAux(e,1,"right"))
 on(leftHit,"contextmenu",(e)=>e.preventDefault())
 on(rightHit,"contextmenu",(e)=>e.preventDefault())
-document.addEventListener("keydown",(e)=>{ const tag=(document.activeElement&&document.activeElement.tagName||"").toLowerCase(); if(tag==="input"||tag==="textarea")return; if(e.key==="ArrowLeft"){ e.preventDefault(); jumpBy(-getJumpSeconds()) } if(e.key==="ArrowRight"){ e.preventDefault(); jumpBy(getJumpSeconds()) } if(e.key===" "){ e.preventDefault(); togglePlay() } if(e.key.toLowerCase()==="f"){ e.preventDefault(); toggleFullscreen() } if(e.key==="ArrowUp"){ e.preventDefault(); showVolumePanel(); volumeRange.value=Math.min(200,Number(volumeRange.value)+5); applyVolume(); saveSettings() } if(e.key==="ArrowDown"){ e.preventDefault(); showVolumePanel(); volumeRange.value=Math.max(0,Number(volumeRange.value)-5); applyVolume(); saveSettings() } })
+document.addEventListener("keydown",(e)=>{ const tag=(document.activeElement&&document.activeElement.tagName||"").toLowerCase(); if(tag==="input"||tag==="textarea")return; if(e.key==="ArrowLeft"){ e.preventDefault(); jumpBy(-getJumpSeconds()) } if(e.key==="ArrowRight"){ e.preventDefault(); jumpBy(getJumpSeconds()) } if(e.key===" "){ e.preventDefault(); togglePlay() } if(e.key.toLowerCase()==="f"){ e.preventDefault(); toggleFullscreen() } if(e.key==="ArrowUp"){ e.preventDefault(); showVolumePanel(); volumeRange.value=Math.min(100,Number(volumeRange.value)+5); applyVolume(); saveSettings() } if(e.key==="ArrowDown"){ e.preventDefault(); showVolumePanel(); volumeRange.value=Math.max(0,Number(volumeRange.value)-5); applyVolume(); saveSettings() } })
 
 ;(async function init(){
   const s=loadSettings()
   autoplayToggle.checked=s.autoplay!==false
   rememberToggle.checked=s.remember!==false
-  boostToggle.checked=s.boost!==false
   volumeRange.value=s.volumePercent||100
     syncJumpUi(); applyVolume(); updatePlayLabel(); updateMuteLabel(); updateFullscreenLabel(); updateSubtitleButton()
   const savedResolver=loadResolverConfig()
