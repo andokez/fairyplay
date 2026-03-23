@@ -12,7 +12,17 @@ const importUrlInput=$("importUrlInput")
 const importFile=$("importFile")
 const importUrlBtn=$("importUrlBtn")
 const exportCurrentBtn=$("exportCurrentBtn")
-const clearLibrariesBtn=$("clearLibrariesBtn")
+const libraryAddMenu=$("libraryAddMenu")
+const importFileOptionBtn=$("importFileOptionBtn")
+const importUrlOptionBtn=$("importUrlOptionBtn")
+const importFileTrigger=$("importFileTrigger")
+const importUrlBox=$("importUrlBox")
+const cancelEditBtn=$("cancelEditBtn")
+const editorActionsMenu=$("editorActionsMenu")
+const editorCutBtn=$("editorCutBtn")
+const editorCopyBtn=$("editorCopyBtn")
+const editorPasteBtn=$("editorPasteBtn")
+const editorDeleteBtn=$("editorDeleteBtn")
 const backFolderBtn=$("backFolderBtn")
 const typeGroupBtn=$("typeGroupBtn")
 const typeStationBtn=$("typeStationBtn")
@@ -41,6 +51,7 @@ const forwardBtn=$("forwardBtn")
 const progressRange=$("progressRange")
 const timeLabel=$("timeLabel")
 const nextItemBtn=$("nextItemBtn")
+const subsBtn=$("subsBtn")
 const muteBtn=$("muteBtn")
 const fullscreenBtn=$("fullscreenBtn")
 const volumeWrap=$("volumeWrap")
@@ -48,6 +59,14 @@ const volumeRange=$("volumeRange")
 const volumeLabel=$("volumeLabel")
 const appRoot=document.querySelector(".app")
 const sidebarToggleBtn=$("sidebarToggleBtn")
+const sidebarBackendStatusBtn=$("sidebarBackendStatusBtn")
+const sidebarBackendStatusDot=$("sidebarBackendStatusDot")
+const collapsedBackendBtn=$("collapsedBackendBtn")
+const collapsedBackendDot=$("collapsedBackendDot")
+const sidebarCollapsedDock=$("sidebarCollapsedDock")
+const collapsedLibraryIcons=$("collapsedLibraryIcons")
+const collapsedScrollUpBtn=$("collapsedScrollUpBtn")
+const collapsedScrollDownBtn=$("collapsedScrollDownBtn")
 const jumpBackLabel=$("jumpBackLabel")
 const jumpForwardLabel=$("jumpForwardLabel")
 const contextPanel=$("contextPanel")
@@ -87,6 +106,9 @@ let saveLibrariesPromise=Promise.resolve()
 let editingItemRef=null
 let editingParentNode=null
 let editingKind=""
+let editorClipboardItem=null
+let editorClipboardKind=""
+let editorClipboardMode="copy"
 let browserSearchTerm=""
 let currentInfoText=""
 let currentInfoExpanded=false
@@ -118,6 +140,27 @@ function normalizeBackendUrl(value){
   return clean.replace(/\/+$/,"")
 }
 
+function applyBackendStatusVisual(state, title){
+  const isOn=state==="on"
+  const targets=[
+    { btn: sidebarBackendStatusBtn, dot: sidebarBackendStatusDot },
+    { btn: collapsedBackendBtn, dot: collapsedBackendDot }
+  ]
+
+  for(const target of targets){
+    if(target.btn){
+      target.btn.classList.toggle("is-on", isOn)
+      target.btn.classList.toggle("is-off", !isOn)
+      target.btn.title=title
+      target.btn.setAttribute("aria-label", title)
+    }
+    if(target.dot){
+      target.dot.classList.toggle("is-on", isOn)
+      target.dot.classList.toggle("is-off", !isOn)
+    }
+  }
+}
+
 async function updateResolverStatus() {
   const el=document.getElementById("resolverStatus")
   if(!el) return
@@ -126,6 +169,7 @@ async function updateResolverStatus() {
 
   if(!RESOLVER_CONFIG.useBackend){
     el.textContent="⚪ Backend desactivado"
+    applyBackendStatusVisual("off", "Backend desactivado")
     return
   }
 
@@ -135,11 +179,16 @@ async function updateResolverStatus() {
       mode: "cors"
     })
 
-    el.textContent = r.ok
-      ? `🟢 Backend activo: ${backendUrl}`
-      : `🔴 Backend sin respuesta: ${backendUrl}`
+    if(r.ok){
+      el.textContent=`🟢 Backend activo: ${backendUrl}`
+      applyBackendStatusVisual("on", `Backend activo: ${backendUrl}`)
+    }else{
+      el.textContent=`🔴 Backend sin respuesta: ${backendUrl}`
+      applyBackendStatusVisual("off", `Backend sin respuesta: ${backendUrl}`)
+    }
   } catch (e) {
     el.textContent = `🔴 Backend no detectado: ${backendUrl}`
+    applyBackendStatusVisual("off", `Backend no detectado: ${backendUrl}`)
   }
 }
 
@@ -153,12 +202,14 @@ function setDebug(t){
   const text=t||""
   debugEl.textContent=text
   renderDebugVisibility()
+updateEditorActionButtons()
 }
 
 function toggleDebugPanel(){
   if(!debugEl?.textContent.trim()) return
   debugExpanded=!debugExpanded
   renderDebugVisibility()
+updateEditorActionButtons()
 }
 
 function formatInfoText(value){
@@ -361,6 +412,8 @@ function setJumpSeconds(v){const s=loadSettings(); s.jumpSeconds=Math.max(1,v); 
 function syncJumpUi(){const n=getJumpSeconds(); jumpBackLabel.textContent=n; jumpForwardLabel.textContent=n}
 function uuid(){return "lib_"+Date.now()+"_"+Math.random().toString(36).slice(2,8)}
 function setSidebarCollapsed(collapsed){ if(!appRoot) return; appRoot.classList.toggle("sidebar-collapsed", !!collapsed); if(sidebarToggleBtn){ sidebarToggleBtn.textContent=collapsed ? "▶" : "◀"; sidebarToggleBtn.title=collapsed ? "Expandir sidebar" : "Encoger sidebar" } const s=loadSettings(); s.sidebarCollapsed=!!collapsed; localStorage.setItem(SETTINGS_KEY, JSON.stringify(s)) }
+function closeLibraryAddMenu(){ if(libraryAddMenu) libraryAddMenu.removeAttribute("open") }
+function showImportUrlBox(show){ if(!importUrlBox) return; importUrlBox.classList.toggle("hidden", !show); if(show) importUrlInput?.focus() }
 function currentLibrary(){return libraries.find(x=>x.id===currentLibraryId)||null}
 function findLibraryById(id){ return libraries.find(x=>x.id===id)||null }
 function isBrowserAtLibrariesRoot(){ return browserStack.length===0 }
@@ -613,6 +666,29 @@ function parseLibraryText(text){
   }
 
   const payload=extractLikelyJsonPayload(raw)
+
+  const repairBrokenArrayObjects=(input)=>{
+    let out=String(input||"")
+
+    // 1) Arregla cosas tipo: "stations":[{ { "name": ...
+    out=out.replace(/(\[\s*\{)\s*\{(?=\s*")/g, "$1")
+
+    // 2) Arregla cosas tipo:
+    //    },
+    //    "name":"1x01"
+    //    => },{
+    //    "name":"1x01"
+    //
+    // Esto se aplica solo cuando justo después de una coma viene algo
+    // que parece el inicio de un nuevo objeto de episodio/video.
+    out=out.replace(
+      /(\}\s*,\s*)(?="(?:name|title|image|url|embed|import|referer|userAgent|headers|drm|kid|key|info|playInNatPlayer|playerType|stations|groups)"\s*:)/g,
+      "$1{"
+    )
+
+    return out
+  }
+
   const attempts=[]
   const push=(label, value)=>{
     if(typeof value==="string" && value && !attempts.some(x=>x.value===value)){
@@ -620,10 +696,16 @@ function parseLibraryText(text){
     }
   }
 
+  const repairedPayload=repairBrokenArrayObjects(payload)
+  const normalizedPayload=normalizeBrokenJsonLikeText(payload)
+  const repairedAndNormalized=normalizeBrokenJsonLikeText(repairBrokenArrayObjects(payload))
+
   push("original", raw)
   push("payload", payload)
-  push("normalizado", normalizeBrokenJsonLikeText(payload))
-  push("normalizado-2", normalizeBrokenJsonLikeText(normalizeBrokenJsonLikeText(payload)))
+  push("array-objects", repairedPayload)
+  push("normalizado", normalizedPayload)
+  push("array-objects-normalizado", repairedAndNormalized)
+  push("normalizado-2", normalizeBrokenJsonLikeText(repairedAndNormalized))
 
   let lastError=""
 
@@ -655,11 +737,65 @@ function makeItemKey(item){
 }
 function isCurrentItem(item){ return !!currentItemKey && makeItemKey(item)===currentItemKey }
 
+function normalizeUrlFieldsFromCombinedInput(preferLastEmpty=false){
+  if(!entryUrlFields) return
+
+  const inputs=getEditorUrlInputs()
+  const allUrls=inputs.flatMap(input => splitEditorUrlText(input.value))
+
+  const hadTrailingEmpty=inputs.some(input => !String(input.value||"").trim())
+
+  entryUrlFields.innerHTML=""
+
+  if(!allUrls.length){
+    entryUrlFields.appendChild(createUrlFieldRow(""))
+    syncUrlFieldButtons()
+    return
+  }
+
+  allUrls.forEach(url=>{
+    entryUrlFields.appendChild(createUrlFieldRow(url))
+  })
+
+  if(preferLastEmpty || hadTrailingEmpty){
+    entryUrlFields.appendChild(createUrlFieldRow(""))
+  }
+
+  syncUrlFieldButtons()
+}
+
 function createUrlFieldRow(value=""){
   const row=document.createElement("div")
   row.className="row url-entry-row"
   row.innerHTML=`<input class="input grow entry-url-input" type="text" placeholder=".mp4 / .m3u8 / .mpd / URL de lista" value="${escapeHtml(value)}" />
+<button class="btn small move-url-up" type="button" title="Subir URL">↑</button>
+<button class="btn small move-url-down" type="button" title="Bajar URL">↓</button>
 <button class="btn small remove-url-field" type="button">✕</button>`
+
+  const input=row.querySelector(".entry-url-input")
+
+  input?.addEventListener("blur", ()=>{
+    const parts=splitEditorUrlText(input.value)
+    if(parts.length>1){
+      normalizeUrlFieldsFromCombinedInput(true)
+    }
+  })
+
+  row.querySelector(".move-url-up")?.addEventListener("click", ()=>{
+    const prev=row.previousElementSibling
+    if(prev){
+      row.parentNode.insertBefore(row, prev)
+      syncUrlFieldButtons()
+    }
+  })
+
+  row.querySelector(".move-url-down")?.addEventListener("click", ()=>{
+    const next=row.nextElementSibling
+    if(next){
+      row.parentNode.insertBefore(next, row)
+      syncUrlFieldButtons()
+    }
+  })
 
   row.querySelector(".remove-url-field")?.addEventListener("click", ()=>{
     row.remove()
@@ -674,9 +810,16 @@ function getEditorUrlInputs(){
   return Array.from(entryUrlFields?.querySelectorAll(".entry-url-input") || [])
 }
 
+function splitEditorUrlText(value=""){
+  return String(value||"")
+    .split(/[\n,]+/)
+    .map(v => String(v||"").trim())
+    .filter(Boolean)
+}
+
 function getVideoUrlsFromEditor(){
   return getEditorUrlInputs()
-    .map(input => String(input.value||"").trim())
+    .flatMap(input => splitEditorUrlText(input.value))
     .filter(Boolean)
 }
 
@@ -684,26 +827,18 @@ function ensureAtLeastOneUrlField(){
   if(!entryUrlFields) return
   if(entryUrlFields.querySelector(".entry-url-input")) return
 
-  const row=document.createElement("div")
-  row.className="row url-entry-row"
-  row.innerHTML=`<input id="entryUrlInput" class="input grow entry-url-input" type="text" placeholder=".mp4 / .m3u8 / .mpd / URL de lista" />
-<button class="btn small remove-url-field hidden" type="button">✕</button>`
-
-  row.querySelector(".remove-url-field")?.addEventListener("click", ()=>{
-    row.remove()
-    ensureAtLeastOneUrlField()
-    syncUrlFieldButtons()
-  })
-
-  entryUrlFields.appendChild(row)
+  entryUrlFields.appendChild(createUrlFieldRow(""))
+  syncUrlFieldButtons()
 }
 
 function syncUrlFieldButtons(){
   const rows=Array.from(entryUrlFields?.querySelectorAll(".url-entry-row") || [])
   const canRemove=rows.length>1
 
-  rows.forEach(row=>{
+  rows.forEach((row, index)=>{
     row.querySelector(".remove-url-field")?.classList.toggle("hidden", !canRemove)
+    row.querySelector(".move-url-up")?.classList.toggle("hidden", index===0)
+    row.querySelector(".move-url-down")?.classList.toggle("hidden", index===rows.length-1)
   })
 }
 
@@ -727,6 +862,7 @@ function setVideoUrlsInEditor(urls=[]){
 
 function appendVideoUrlField(value=""){
   if(!entryUrlFields) return
+  normalizeUrlFieldsFromCombinedInput(false)
   entryUrlFields.appendChild(createUrlFieldRow(value))
   syncUrlFieldButtons()
 }
@@ -833,7 +969,8 @@ async function playNextInCurrentNode(){ const stations=getCurrentNodeStations();
 function isDirectMediaUrl(url) {
   if (!url) return false
 
-  const clean = url.split('#')[0].split('?')[0].toLowerCase()
+  const raw = String(url || "").trim().toLowerCase()
+  const clean = raw.split('#')[0].split('?')[0]
 
   return clean.endsWith('.mp4')
     || clean.endsWith('.m4v')
@@ -862,6 +999,7 @@ function isDirectMediaUrl(url) {
     || clean.endsWith('.ism')
     || clean.endsWith('.isml')
     || clean.endsWith('.ism/manifest')
+    || /\/get_video\?/i.test(raw)
 }
 function needsResolution(url) {
   if (!url) return false
@@ -875,17 +1013,25 @@ function normalizePossibleMediaUrl(value, baseUrl=""){
 function extractMediaCandidatesFromHtml(html, baseUrl=""){
   const text=String(html||"")
   const patterns=[
+    /<video[^>]+id=["']mainvideo["'][^>]+src=["']([^"']+)["']/ig,
+    /<video[^>]+src=["']([^"']+)["']/ig,
     /sources\s*:\s*\[\s*\{[\s\S]*?file\s*:\s*['"]([^'"]+)['"]/ig,
-    /(?:file|src|url)\s*[:=]\s*['"]([^'"]+\.(?:m3u8|m3u|mpd|mp4|m4v|m4a|m4s|cmfv|cmfa|webm|mp3|aac|flac|wav|ogg|ogv|oga|mov|mkv|avi|wmv|ts|mpg|mpeg|isml|ism)[^'"]*)['"]/ig,
-    /['"](https?:\/\/[^'"]+\.(?:m3u8|m3u|mpd|mp4|m4v|m4a|m4s|cmfv|cmfa|webm|mp3|aac|flac|wav|ogg|ogv|oga|mov|mkv|avi|wmv|ts|mpg|mpeg|isml|ism)[^'"]*)['"]/ig,
-    /['"]((?:\/|\.\/|\.\.\/)[^'"]+\.(?:m3u8|m3u|mpd|mp4|m4v|m4a|m4s|cmfv|cmfa|webm|mp3|aac|flac|wav|ogg|ogv|oga|mov|mkv|avi|wmv|ts|mpg|mpeg|isml|ism)[^'"]*)['"]/ig
+    /(?:file|src|url)\s*[:=]\s*['"]([^'"]+(?:\.m3u8|\.m3u|\.mpd|\.mp4|\.m4v|\.m4a|\.m4s|\.cmfv|\.cmfa|\.webm|\.mp3|\.aac|\.flac|\.wav|\.ogg|\.ogv|\.oga|\.mov|\.mkv|\.avi|\.wmv|\.ts|\.mpg|\.mpeg|\.isml|\.ism|\/get_video\?[^'"]*)[^'"]*)['"]/ig,
+    /['"](https?:\/\/[^'"]+(?:\.m3u8|\.m3u|\.mpd|\.mp4|\.m4v|\.m4a|\.m4s|\.cmfv|\.cmfa|\.webm|\.mp3|\.aac|\.flac|\.wav|\.ogg|\.ogv|\.oga|\.mov|\.mkv|\.avi|\.wmv|\.ts|\.mpg|\.mpeg|\.isml|\.ism|\/get_video\?[^'"]*)[^'"]*)['"]/ig,
+    /['"]((?:\/\/|\/|\.\/|\.\.\/)[^'"]*(?:\/get_video\?[^'"]*|(?:\.m3u8|\.m3u|\.mpd|\.mp4|\.m4v|\.m4a|\.m4s|\.cmfv|\.cmfa|\.webm|\.mp3|\.aac|\.flac|\.wav|\.ogg|\.ogv|\.oga|\.mov|\.mkv|\.avi|\.wmv|\.ts|\.mpg|\.mpeg|\.isml|\.ism)[^'"]*))['"]/ig
   ]
   const found=[]
   for(const pattern of patterns){
     pattern.lastIndex=0
     let match
     while((match=pattern.exec(text))){
-      const candidate=normalizePossibleMediaUrl(match[1]||match[0], baseUrl)
+      const raw=match[1]||match[0]
+      let candidate=normalizePossibleMediaUrl(raw, baseUrl)
+
+      if(!candidate && String(raw).startsWith("//")){
+        candidate="https:"+String(raw).trim()
+      }
+
       if(candidate && isDirectMediaUrl(candidate) && !found.includes(candidate)) found.push(candidate)
       if(found.length>=12) return found
     }
@@ -1152,7 +1298,19 @@ function normalizeDropboxUrl(url){
   return url
 }
 
-function destroyPlayers(){ try{if(dashPlayer){dashPlayer.reset();dashPlayer=null}}catch{}; try{if(hlsPlayer){hlsPlayer.destroy();hlsPlayer=null}}catch{}; video.pause(); video.removeAttribute("src"); video.load() }
+function destroyPlayers(){
+  try{ if(dashPlayer){ dashPlayer.reset(); dashPlayer=null } }catch{}
+  try{ if(hlsPlayer){ hlsPlayer.destroy(); hlsPlayer=null } }catch{}
+
+  try{
+    Array.from(video.textTracks || []).forEach(track=>{ track.mode="disabled" })
+  }catch{}
+
+  video.pause()
+  video.removeAttribute("src")
+  video.load()
+  updateSubtitleButton()
+}
 
 function inferType(url){
   if(isGoogleDriveUrl(url)) return "file"
@@ -1398,20 +1556,29 @@ async function playUrl(url,title,item=null){
     const shouldProxyGoogleHostedMedia =
       isGoogleHostedMediaUrl(originalUrl)
 
-    const shouldTryProxyFallbackForFile =
-      type==="file" &&
-      (
-        !!item?._resolvedFromHost ||
-        shouldProxyGoogleHostedMedia ||
-        Object.keys(explicitProxyHeaders).length>0 ||
-        !!String(item?.referer||"").trim() ||
-        !!String(item?.userAgent||"").trim()
-      )
+const shouldForceProxyForResolvedHostFile =
+  type==="file" &&
+  !!item?._resolvedFromHost
 
-    const proxiedFileUrl =
-      shouldTryProxyFallbackForFile
-        ? buildBackendMediaProxyUrl(originalUrl, item)
-        : ""
+const shouldTryProxyFallbackForFile =
+  type==="file" &&
+  (
+    shouldForceProxyForResolvedHostFile ||
+    shouldProxyGoogleHostedMedia ||
+    Object.keys(explicitProxyHeaders).length>0 ||
+    !!String(item?.referer||"").trim() ||
+    !!String(item?.userAgent||"").trim()
+  )
+
+const proxiedFileUrl =
+  shouldTryProxyFallbackForFile
+    ? buildBackendMediaProxyUrl(originalUrl, item)
+    : ""
+
+if(shouldForceProxyForResolvedHostFile && proxiedFileUrl){
+  playbackUrl=proxiedFileUrl
+  setDebug(`Reproduciendo fichero resuelto vía proxy:\n${playbackUrl}`)
+}
 
     if(shouldProxyDash){
       playbackUrl=buildBackendMediaProxyUrl(originalUrl, item)
@@ -1419,7 +1586,7 @@ async function playUrl(url,title,item=null){
     }else if(shouldProxyGoogleHostedMedia){
       playbackUrl=buildBackendMediaProxyUrl(originalUrl, item)
       setDebug(`Reproduciendo Google media vía proxy:\n${playbackUrl}`)
-    }else{
+    }else if(!shouldForceProxyForResolvedHostFile){
       setDebug(`Reproduciendo directo:\n${originalUrl}`)
     }
 
@@ -1689,11 +1856,21 @@ async function playUrl(url,title,item=null){
           })
 
           hlsPlayer.on(Hls.Events.MANIFEST_PARSED, ()=>{
+            updateSubtitleButton()
             video.play().catch(()=>{})
           })
 
           hlsPlayer.on(Hls.Events.LEVEL_LOADED, ()=>{
+            updateSubtitleButton()
             video.play().catch(()=>{})
+          })
+
+          hlsPlayer.on(Hls.Events.SUBTITLE_TRACKS_UPDATED, ()=>{
+            updateSubtitleButton()
+          })
+
+          hlsPlayer.on(Hls.Events.SUBTITLE_TRACK_SWITCH, ()=>{
+            updateSubtitleButton()
           })
 
           hlsPlayer.on(Hls.Events.ERROR, (_event, data)=>{
@@ -1734,6 +1911,8 @@ async function playUrl(url,title,item=null){
 
         setDebug(`Reproduciendo HLS directo:\n${originalUrl}`)
         startHls(originalUrl)
+		setTimeout(updateSubtitleButton, 500)
+        setTimeout(updateSubtitleButton, 1500)
       } else {
         setDebug(`Reproduciendo HLS directo:\n${originalUrl}`)
         video.src=originalUrl
@@ -1762,8 +1941,7 @@ async function playUrl(url,title,item=null){
       video.src=playbackUrl
     }
 
-    const shouldUseAudioBoost =
-      type==="hls" || type==="dash"
+    const shouldUseAudioBoost = true
 
     if(shouldUseAudioBoost){
       await ensureAudioBoost()
@@ -1865,16 +2043,17 @@ function applyVolume(){
   volumeLabel.textContent=percent+"%"
 
   const boostAllowed=boostToggle.checked
-  const currentSrc=String(video?.currentSrc || video?.src || "").toLowerCase()
-  const isAdaptive=currentSrc.includes(".m3u8") || currentSrc.includes(".mpd")
-  const canBoostNow=boostAllowed && isAdaptive
+  const canBoostNow=boostAllowed && gainNode
 
   if(percent<=100){
     video.volume=percent/100
     if(gainNode) gainNode.gain.value=1
   }else{
     video.volume=1
-    if(gainNode) gainNode.gain.value=canBoostNow ? percent/100 : 1
+    if(gainNode){
+      const safeBoost = Math.min(percent/100, 2) // límite real 200%
+      gainNode.gain.value = canBoostNow ? safeBoost : 1
+    }
   }
 
   updateMuteLabel()
@@ -1884,6 +2063,72 @@ function hideVolumePanelSoon(){ setTimeout(()=>{ if(!volumeWrap.matches(":hover"
 function updateMuteLabel(){ const effectiveMuted = video.muted || Number(volumeRange.value)===0; muteBtn.textContent = effectiveMuted ? "🔇" : "🔊" }
 function updatePlayLabel(){ playPauseBtn.textContent=video.paused?"▶":"❚❚" }
 function updateFullscreenLabel(){ fullscreenBtn.textContent=document.fullscreenElement?"🡼":"⛶" }
+
+function getNativeSubtitleTracks(){
+  try{
+    return Array.from(video.textTracks || []).filter(track=>{
+      const kind=String(track.kind||"").toLowerCase()
+      return kind==="subtitles" || kind==="captions"
+    })
+  }catch{
+    return []
+  }
+}
+
+function hasSubtitleTracks(){
+  const nativeTracks=getNativeSubtitleTracks()
+  const hlsTracks=Array.isArray(hlsPlayer?.subtitleTracks) ? hlsPlayer.subtitleTracks.filter(Boolean) : []
+  return nativeTracks.length>0 || hlsTracks.length>0
+}
+
+function subtitlesAreEnabled(){
+  const nativeTracks=getNativeSubtitleTracks()
+  const nativeEnabled=nativeTracks.some(track=>track.mode==="showing")
+
+  if(nativeEnabled) return true
+  if(hlsPlayer && typeof hlsPlayer.subtitleTrack==="number") return hlsPlayer.subtitleTrack >= 0
+
+  return false
+}
+
+function setNativeSubtitleMode(enabled){
+  const nativeTracks=getNativeSubtitleTracks()
+  nativeTracks.forEach((track, index)=>{
+    track.mode = enabled && index===0 ? "showing" : "disabled"
+  })
+}
+
+function setSubtitlesEnabled(enabled){
+  if(hlsPlayer && Array.isArray(hlsPlayer.subtitleTracks) && hlsPlayer.subtitleTracks.length){
+    hlsPlayer.subtitleTrack = enabled ? 0 : -1
+    if(typeof hlsPlayer.subtitleDisplay==="boolean") hlsPlayer.subtitleDisplay = !!enabled
+  }
+
+  setNativeSubtitleMode(enabled)
+  updateSubtitleButton()
+}
+
+function toggleSubtitles(){
+  if(!hasSubtitleTracks()){
+    setDebug((debugEl?.textContent ? debugEl.textContent + "\n" : "") + "Este stream no trae pistas de subtítulos detectables.")
+    updateSubtitleButton()
+    return
+  }
+
+  setSubtitlesEnabled(!subtitlesAreEnabled())
+}
+
+function updateSubtitleButton(){
+  if(!subsBtn) return
+
+  const available=hasSubtitleTracks()
+  const enabled=subtitlesAreEnabled()
+
+  subsBtn.disabled=!available
+  subsBtn.textContent = !available ? "Subs --" : (enabled ? "Subs ON" : "Subs OFF")
+  subsBtn.title = !available ? "Sin subtítulos detectados" : "Activar o desactivar subtítulos"
+}
+
 function format(s){ if(!isFinite(s))return"00:00"; s=Math.floor(s||0); const h=Math.floor(s/3600), m=Math.floor((s%3600)/60), sec=s%60; if(h>0)return String(h).padStart(2,"0")+":"+String(m).padStart(2,"0")+":"+String(sec).padStart(2,"0"); return String(m).padStart(2,"0")+":"+String(sec).padStart(2,"0") }
 
 function parseM3uAttributes(text){
@@ -2331,7 +2576,6 @@ function updateImportButtons(){
   if(importUrlBtn){ importUrlBtn.disabled=disabled; importUrlBtn.textContent=importInFlight ? "Cargando..." : "Cargar" }
   if(importFile){ importFile.disabled=disabled }
   if(addEntryBtn){ addEntryBtn.disabled=!storageReady }
-  if(clearLibrariesBtn){ clearLibrariesBtn.disabled=!storageReady }
 }
 function sourceUrlFromData(data, importUrl=""){
   if(importUrl) return normalizeDropboxUrl(importUrl)
@@ -2411,9 +2655,52 @@ function cardImage(image, fallback){ const img = image && /^https?:\/\//i.test(i
 function closeAllLibraryMenus(except=null){
   document.querySelectorAll('.card-menu').forEach(menu=>{ if(menu!==except) menu.removeAttribute('open') })
 }
+function updateCollapsedLibraryScrollButtons(){
+  if(!collapsedLibraryIcons || !collapsedScrollUpBtn || !collapsedScrollDownBtn) return
+
+  const maxScroll=Math.max(0, collapsedLibraryIcons.scrollHeight-collapsedLibraryIcons.clientHeight)
+  const canScroll=maxScroll>6
+  const showUp=canScroll && collapsedLibraryIcons.scrollTop>6
+  const showDown=canScroll && collapsedLibraryIcons.scrollTop<(maxScroll-6)
+
+  collapsedScrollUpBtn.classList.toggle("hidden", !showUp)
+  collapsedScrollDownBtn.classList.toggle("hidden", !showDown)
+}
+
+function renderCollapsedLibraryIcons(){
+  if(!collapsedLibraryIcons) return
+
+  collapsedLibraryIcons.innerHTML=""
+
+  if(!libraries.length){
+    updateCollapsedLibraryScrollButtons()
+    return
+  }
+
+  for(const lib of libraries){
+    const btn=document.createElement("button")
+    btn.type="button"
+    btn.className="collapsed-library-btn"+(lib.id===currentLibraryId?" active":"")
+    btn.title=lib.title||"Biblioteca"
+
+    const img=(lib.image && /^https?:\/\//i.test(lib.image))
+      ? `<img src="${escapeHtml(lib.image)}" loading="lazy" alt="${escapeHtml(lib.title||"Biblioteca")}">`
+      : `<span class="collapsed-library-fallback">${escapeHtml((lib.title||"•").trim().charAt(0).toUpperCase()||"•")}</span>`
+
+    btn.innerHTML=img
+    btn.addEventListener("click", ()=>openLibrary(lib.id))
+    collapsedLibraryIcons.appendChild(btn)
+  }
+
+  requestAnimationFrame(updateCollapsedLibraryScrollButtons)
+}
 function renderLibraryList(){
   libraryList.innerHTML=""
-  if(!libraries.length){ libraryList.innerHTML='<div class="panel">No hay bibliotecas cargadas.</div>'; return }
+  if(!libraries.length){
+    libraryList.innerHTML='<div class="panel">No hay bibliotecas cargadas.</div>'
+    renderCollapsedLibraryIcons()
+    return
+  }
   for(const lib of libraries){
     const count=collectAllStations(lib.data).length
     const el=document.createElement("div")
@@ -2439,30 +2726,67 @@ function renderLibraryList(){
     el.querySelector(".del").addEventListener('click',async (e)=>{ e.stopPropagation(); libraries=libraries.filter(x=>x.id!==lib.id); if(currentLibraryId===lib.id){ currentLibraryId=libraries[0]?.id||null; browserStack=[] } renderLibraryList(); renderBrowser(); await persistLibrariesNow(); setDebug("Biblioteca borrada.") })
     libraryList.appendChild(el)
   }
+
+  renderCollapsedLibraryIcons()
 }
 function getCurrentNode(){ return browserStack[browserStack.length-1] || null }
 function getNodeChildren(node){
   if(isStationContainer(node)){
-    const videos=Array.isArray(node?.stations)
-      ? node.stations.map(v => ({ kind:"video", data:v }))
+    const stationChildren=Array.isArray(node?.stations)
+      ? node.stations.map(child => ({
+          kind: isPlayableLeaf(child) ? "video" : "station",
+          data: child
+        }))
       : []
-    return videos
+
+    return stationChildren
   }
 
   const groups=Array.isArray(node?.groups)
-    ? node.groups.map(g => ({ kind:"group", data:g }))
+    ? node.groups.map(child => ({
+        kind: Array.isArray(child?.groups) ? "group" : "station",
+        data: child
+      }))
     : []
 
   const stations=Array.isArray(node?.stations)
     ? node.stations.map(s => ({
-        kind: (s && typeof s.url==="string" && s.url.trim()!=="") ? "video" : "station",
-        data: s
+        kind:"video",
+        data:s
       }))
     : []
 
   return [...groups, ...stations]
 }
+function countGroupChildItems(node){
+  const groupEntries=Array.isArray(node?.groups) ? node.groups : []
+  const videoEntries=Array.isArray(node?.stations) ? node.stations : []
+
+  let folders=0
+  for(const child of groupEntries){
+    if(Array.isArray(child?.groups) || isStationContainer(child)) folders++
+  }
+
+  const videos=videoEntries.filter(isPlayableLeaf).length
+
+  return { folders, videos }
+}
+
+function countStationChildItems(node){
+  const entries=Array.isArray(node?.stations) ? node.stations : []
+
+  let folders=0
+  let videos=0
+
+  for(const child of entries){
+    if(isPlayableLeaf(child)) videos++
+    else if(isStationContainer(child)) folders++
+  }
+
+  return { folders, videos }
+}
 function fillEditorFromItem(item, kind, parentNode){
+  if(cancelEditBtn) cancelEditBtn.classList.remove("hidden")
   const realKind=detectEditorKindFromItem(item, kind)
 
   editingItemRef=item
@@ -2502,11 +2826,13 @@ function fillEditorFromItem(item, kind, parentNode){
   }
 
   addEntryBtn.textContent="Guardar cambios"
+  updateEditorActionButtons()
   scrollBrowserToTop()
 }
 
 function clearEditorForm(){
   editingItemRef=null
+  if(cancelEditBtn) cancelEditBtn.classList.add("hidden")
   editingParentNode=null
   editingKind=""
   entryNameInput.value=""
@@ -2520,6 +2846,147 @@ function clearEditorForm(){
   entryImportToggle.checked=false
   entryEmbedToggle.checked=false
   addEntryBtn.textContent="Añadir aquí"
+  updateEditorActionButtons()
+}
+
+function cloneEditorItem(item){
+  if(!item) return null
+  return structuredClone(item)
+}
+
+function getEditorTargetArray(kind, node){
+  if(!node) return null
+
+  if(kind==="group"){
+    if(isStationContainer(node)) return null
+    if(!Array.isArray(node.groups)) node.groups=[]
+    return node.groups
+  }
+
+  if(kind==="station"){
+    if(isStationContainer(node)){
+      if(!Array.isArray(node.stations)) node.stations=[]
+      return node.stations
+    }
+
+    if(!Array.isArray(node.groups)) node.groups=[]
+    return node.groups
+  }
+
+  if(!Array.isArray(node.stations)) node.stations=[]
+  return node.stations
+}
+
+function canPasteEditorClipboard(node=getCurrentNode()){
+  if(!editorClipboardItem || !editorClipboardKind) return false
+  return Array.isArray(getEditorTargetArray(editorClipboardKind, node))
+}
+
+function updateEditorActionButtons(){
+  const hasEditingItem=!!editingItemRef && !!editingParentNode && !!editingKind
+  const canPaste=canPasteEditorClipboard(getCurrentNode())
+
+  if(editorCutBtn) editorCutBtn.disabled=!hasEditingItem
+  if(editorCopyBtn) editorCopyBtn.disabled=!hasEditingItem
+  if(editorPasteBtn) editorPasteBtn.disabled=!canPaste
+  if(editorDeleteBtn){
+    editorDeleteBtn.disabled=!hasEditingItem
+    editorDeleteBtn.classList.toggle("hidden", !hasEditingItem)
+  }
+}
+
+function storeEditorClipboardFromCurrent(mode="copy"){
+  if(!editingItemRef || !editingParentNode || !editingKind){
+    setDebug("Primero abre un elemento en editar.")
+    return false
+  }
+
+  editorClipboardItem=cloneEditorItem(editingItemRef)
+  editorClipboardKind=editingKind
+  editorClipboardMode=mode==="cut" ? "cut" : "copy"
+  updateEditorActionButtons()
+  return true
+}
+
+function cutEditingItem(){
+  if(!storeEditorClipboardFromCurrent("cut")) return
+
+  let arr=null
+  if(editingKind==="group") arr=editingParentNode.groups
+  else if(editingKind==="station" || editingKind==="video") arr=editingParentNode.stations
+
+  if(!Array.isArray(arr)){
+    setDebug("No se pudo cortar el elemento.")
+    return
+  }
+
+  const idx=arr.indexOf(editingItemRef)
+  if(idx<0){
+    setDebug("No se pudo cortar el elemento.")
+    return
+  }
+
+  arr.splice(idx,1)
+  clearEditorForm()
+  renderLibraryList()
+  renderBrowser()
+  saveLibrariesSoon()
+  setDebug("Elemento cortado. Ve a la carpeta destino y pulsa Pegar.")
+}
+
+function copyEditingItem(){
+  if(!storeEditorClipboardFromCurrent("copy")) return
+  setDebug("Elemento copiado. Ve a la carpeta destino y pulsa Pegar.")
+}
+
+function pasteClipboardItem(){
+  const lib=currentLibrary()
+  const node=getCurrentNode()
+
+  if(!lib || !node){
+    setDebug("Abre una carpeta de destino antes de pegar.")
+    return
+  }
+
+  if(!editorClipboardItem || !editorClipboardKind){
+    setDebug("No hay nada copiado o cortado.")
+    return
+  }
+
+  const targetArr=getEditorTargetArray(editorClipboardKind, node)
+  if(!Array.isArray(targetArr)){
+    setDebug("Ese tipo de elemento no se puede pegar aquí.")
+    return
+  }
+
+  const pasted=cloneEditorItem(editorClipboardItem)
+  targetArr.push(pasted)
+
+  if(editorClipboardMode==="cut"){
+    editorClipboardItem=null
+    editorClipboardKind=""
+    editorClipboardMode="copy"
+  }
+
+  renderLibraryList()
+  renderBrowser()
+  saveLibrariesSoon()
+  updateEditorActionButtons()
+  setDebug("Elemento pegado.")
+}
+
+function deleteEditingItemFromEditor(){
+  if(!editingItemRef || !editingParentNode || !editingKind){
+    setDebug("Primero abre un elemento en editar.")
+    return
+  }
+
+  const itemName=editingItemRef.name || editingItemRef.title || "este elemento"
+  if(!window.confirm(`¿Seguro que quieres borrar "${itemName}"?`)) return
+
+  deleteBrowserItem(editingItemRef, editingKind, editingParentNode)
+  clearEditorForm()
+  setDebug("Elemento borrado.")
 }
 
 function moveArrayItem(arr, fromIndex, toIndex){
@@ -2558,6 +3025,7 @@ function deleteBrowserItem(item, kind, parentNode){
   const idx=arr.indexOf(item)
   if(idx<0) return
   arr.splice(idx,1)
+  if(item===editingItemRef) clearEditorForm()
   renderLibraryList()
   renderBrowser()
   saveLibrariesSoon()
@@ -2594,65 +3062,102 @@ function collectNodeSearchResults(startNode, term, baseStack=[]){
   const normalizedTerm=normalizeSearchText(term)
   if(!startNode || !normalizedTerm) return results
 
-  function visitNode(node, stack, pathParts){
+  function visitGroupNode(node, stack, pathParts){
     if(!node) return
 
     const groups=Array.isArray(node.groups) ? node.groups : []
     const stations=Array.isArray(node.stations) ? node.stations : []
 
-    for(const group of groups){
-      const groupName=group?.name || "Group"
-      const nextStack=[...stack, group]
-      const nextPath=[...pathParts, groupName]
+    for(const child of groups){
+      const childName=child?.name || "Carpeta"
+      const childPath=[...pathParts, childName]
 
-      if(itemSearchName(group).includes(normalizedTerm)){
-        results.push({
-          kind:"group",
-          data:group,
-          stack:nextStack,
-          pathLabel:makePathLabel(nextPath),
-          matchLabel:groupName
-        })
+      if(Array.isArray(child?.groups)){
+        const nextStack=[...stack, child]
+
+        if(itemSearchName(child).includes(normalizedTerm)){
+          results.push({
+            kind:"group",
+            data:child,
+            stack:nextStack,
+            pathLabel:makePathLabel(childPath),
+            matchLabel:childName
+          })
+        }
+
+        visitGroupNode(child, nextStack, childPath)
+      }else if(isStationContainer(child)){
+        const nextStack=[...stack, child]
+
+        if(itemSearchName(child).includes(normalizedTerm)){
+          results.push({
+            kind:"station",
+            data:child,
+            stack:nextStack,
+            pathLabel:makePathLabel(childPath),
+            matchLabel:childName
+          })
+        }
+
+        visitStationNode(child, nextStack, childPath)
       }
-
-      visitNode(group, nextStack, nextPath)
     }
 
-    for(const station of stations){
-      const stationName=station?.name || "Station"
-      const stationStack=[...stack, station]
-      const stationPath=[...pathParts, stationName]
-      const stationIsContainer=isStationContainer(station)
+    for(const videoItem of stations){
+      const videoName=videoItem?.name || videoItem?.title || "Vídeo"
 
-      if(itemSearchName(station).includes(normalizedTerm)){
+      if(itemSearchName(videoItem).includes(normalizedTerm)){
         results.push({
-          kind: stationIsContainer ? "station" : "video",
-          data:station,
-          stack: stationIsContainer ? stationStack : [...stack],
-          pathLabel:makePathLabel(stationPath),
-          matchLabel:stationName
+          kind:"video",
+          data:videoItem,
+          stack:[...stack],
+          pathLabel:makePathLabel([...pathParts, videoName]),
+          matchLabel:videoName
         })
       }
+    }
+  }
 
-      if(stationIsContainer){
-        const videos=Array.isArray(station.stations) ? station.stations : []
-        for(const videoItem of videos){
-          const videoName=videoItem?.name || videoItem?.title || "Vídeo"
-          if(itemSearchName(videoItem).includes(normalizedTerm)){
-            results.push({
-              kind:"video",
-              data:videoItem,
-              stack:[...stationStack],
-              pathLabel:makePathLabel([...stationPath, videoName]),
-              matchLabel:videoName
-            })
-          }
+  function visitStationNode(node, stack, pathParts){
+    if(!node) return
+
+    const entries=Array.isArray(node.stations) ? node.stations : []
+
+    for(const child of entries){
+      const childName=child?.name || child?.title || "Elemento"
+
+      if(isStationContainer(child)){
+        const nextStack=[...stack, child]
+        const nextPath=[...pathParts, childName]
+
+        if(itemSearchName(child).includes(normalizedTerm)){
+          results.push({
+            kind:"station",
+            data:child,
+            stack:nextStack,
+            pathLabel:makePathLabel(nextPath),
+            matchLabel:childName
+          })
+        }
+
+        visitStationNode(child, nextStack, nextPath)
+      }else if(isPlayableLeaf(child)){
+        if(itemSearchName(child).includes(normalizedTerm)){
+          results.push({
+            kind:"video",
+            data:child,
+            stack:[...stack],
+            pathLabel:makePathLabel([...pathParts, childName]),
+            matchLabel:childName
+          })
         }
       }
     }
   }
 
-  visitNode(startNode, baseStack, [])
+  if(isStationContainer(startNode)) visitStationNode(startNode, baseStack, [])
+  else visitGroupNode(startNode, baseStack, [])
+
   return results
 }
 
@@ -2778,35 +3283,24 @@ async function openStation(item, options={}) {
       continue
     }
 
-    if (isEmbedStation(item)) {
-      const resolved = await resolveStreamUrlManual(originalUrl, item?.referer || "")
+if (isEmbedStation(item)) {
+  if(!isOpenRequestCurrent(requestId)) return
 
-      if(!isOpenRequestCurrent(requestId)) return
+  showManualResolve(
+    originalUrl,
+    item?.name || item?.title || "",
+    item?.referer || "",
+    item
+  )
 
-      if (!resolved) {
-        if(options?.onlyPreferredServer){
-          showManualResolve(originalUrl, item?.name || item?.title || "", item?.referer || "", item)
-          setDebug(`URL recibida al pinchar:\n${originalUrl}\n\n${source.label} está marcado como embed.\nSe abrió la resolución manual para captcha / continue.`)
-          return
-        }
-        continue
-      }
+  setDebug(`URL recibida al pinchar:
+${originalUrl}
 
-      setLinkStatus(item?.url || originalUrl, "ok")
-      setLinkStatus(originalUrl, "ok")
-      renderBrowser()
+${source.label} requiere captcha / continue manual.
+Pulsa el botón para abrir la ventana.`)
 
-      playUrl(
-        resolved,
-        item?.name || item?.title || "",
-        {
-          ...item,
-          _resolvedFromHost: true,
-          referer: item?.referer || originalUrl
-        }
-      )
-      return
-    }
+  return
+}
 
     let urlToPlay = originalUrl
 
@@ -2833,6 +3327,10 @@ async function openStation(item, options={}) {
     renderBrowser()
 
     const resolvedFromHost = needsResolution(originalUrl)
+    const resolvedIsDirectMedia = isDirectMediaUrl(urlToPlay)
+
+    setDebug(`✅ ${source.label} resuelta a:
+${urlToPlay}`)
 
     playUrl(
       urlToPlay,
@@ -2840,7 +3338,7 @@ async function openStation(item, options={}) {
       resolvedFromHost
         ? {
             ...item,
-            _resolvedFromHost: true,
+            _resolvedFromHost: !resolvedIsDirectMedia,
             referer: item?.referer || originalUrl
           }
         : item
@@ -2978,14 +3476,20 @@ function renderBrowser(){
       const card=document.createElement("div")
       card.className="card"+(isCurrentItem(item)?" active-item":"")
       card.innerHTML =
-        cardImage(item.image || item.img || "", fallback) +
-        '<div class="card-body">'+
-          (isCurrentItem(item)?'<div class="card-current-dot"></div>':'')+
-          statusDot+
-          '<div class="card-type">'+(isGroup ? 'Carpeta' : (stationContainer ? 'Carpeta' : 'Vídeo'))+'</div>'+
-          '<div class="card-title">'+escapeHtml(item.name || item.title || "Sin título")+'</div>'+
-          '<div class="card-meta">'+escapeHtml(meta)+'</div>'+
-        '</div>'
+  cardImage(item.image || item.img || "", fallback) +
+  '<div class="card-body">'+
+    (isCurrentItem(item)?'<div class="card-current-dot"></div>':'')+
+    statusDot+
+    '<div class="card-type">'+(isGroup ? 'Carpeta' : (stationContainer ? 'Carpeta' : 'Vídeo'))+'</div>'+
+    '<div class="card-title">'+escapeHtml(item.name || item.title || "Sin título")+'</div>'+
+    '<div class="card-meta">'+escapeHtml(meta)+'</div>'+
+    '<details class="card-menu browser-item-menu">'+
+      '<summary class="menu-btn" type="button">⋮</summary>'+
+      '<div class="menu-pop">'+
+        '<button class="btn small edit-item" type="button">Editar</button>'+
+      '</div>'+
+    '</details>'+
+  '</div>'
 
       card.addEventListener("click", async ()=>{
         if(result.kind==="video"){
@@ -2999,7 +3503,23 @@ function renderBrowser(){
           openSearchResult(result)
         }
       })
+const menu=card.querySelector('.card-menu')
+const summary=card.querySelector('.menu-btn')
+const pop=card.querySelector('.menu-pop')
 
+;[menu, summary, pop].forEach(node=>{
+  if(!node) return
+  node.addEventListener('click', e=>e.stopPropagation())
+  node.addEventListener('mousedown', e=>e.stopPropagation())
+  node.addEventListener('pointerdown', e=>e.stopPropagation())
+})
+
+if(summary) summary.addEventListener('click', ()=>setTimeout(()=>closeAllLibraryMenus(menu), 0))
+
+card.querySelector(".edit-item")?.addEventListener("click",(e)=>{
+  e.stopPropagation()
+  fillEditorFromItem(item, result.kind, getCurrentNode())
+})
       browserGrid.appendChild(card)
     }
     return
@@ -3020,15 +3540,20 @@ function renderBrowser(){
     const editorKind=isGroup ? "group" : (stationContainer ? "station" : "video")
 
     const fallback=isGroup ? "📁" : (stationContainer ? "🗂" : (item.import ? "🧩" : "🎬"))
-    const groupCount=Array.isArray(item.groups)?item.groups.length:0
-    const stationCount=Array.isArray(item.stations)?item.stations.length:0
-    const videoCount=stationContainer && Array.isArray(item.stations)?item.stations.length:0
 
     let meta=""
     if(isGroup){
-      meta=[groupCount?groupCount+" carpetas":"", stationCount?stationCount+" vídeos":""].filter(Boolean).join(" · ")
+      const counts=countGroupChildItems(item)
+      meta=[
+        counts.folders ? counts.folders+" carpetas" : "",
+        counts.videos ? counts.videos+" vídeos" : ""
+      ].filter(Boolean).join(" · ")
     }else if(stationContainer){
-      meta=videoCount+" vídeos"
+      const counts=countStationChildItems(item)
+      meta=[
+        counts.folders ? counts.folders+" carpetas" : "",
+        counts.videos ? counts.videos+" vídeos" : ""
+      ].filter(Boolean).join(" · ")
     }else{
       meta=item.import ? "Importa otra lista" : (isEmbedStation(item) ? "Embed / captcha" : (isYoutubeUrl(item.url) ? "YouTube" : ""))
     }
@@ -3049,7 +3574,7 @@ function renderBrowser(){
         '<div class="card-meta">'+escapeHtml(meta)+'</div>'+
         (item.import?'<div class="card-badge">IMPORT</div>':'')+
         (isEmbedStation(item)?'<div class="card-badge">EMBED</div>':'')+
-        '<details class="card-menu browser-item-menu"><summary class="menu-btn" type="button">⋮</summary><div class="menu-pop"><button class="btn small move-left" type="button">Mover izda</button><button class="btn small move-right" type="button">Mover dcha</button>'+getServerMenuButtonsHtml(item)+'<button class="btn small edit-item" type="button">Editar</button><button class="btn small del-item" type="button">Borrar</button></div></details>'+
+        '<details class="card-menu browser-item-menu"><summary class="menu-btn" type="button">⋮</summary><div class="menu-pop"><button class="btn small move-left" type="button">Mover izda</button><button class="btn small move-right" type="button">Mover dcha</button>'+getServerMenuButtonsHtml(item)+'<button class="btn small edit-item" type="button">Editar</button></div></details>'+
       '</div>'
 
     card.onclick=async ()=>{
@@ -3100,10 +3625,6 @@ function renderBrowser(){
       e.stopPropagation()
       fillEditorFromItem(item, editorKind, node)
     })
-    card.querySelector(".del-item")?.addEventListener("click",(e)=>{
-      e.stopPropagation()
-      deleteBrowserItem(item, child.kind, node)
-    })
 
     browserGrid.appendChild(card)
   }
@@ -3111,6 +3632,8 @@ function renderBrowser(){
 async function addEntryAtCurrentNode(){
   const lib=currentLibrary(), node=getCurrentNode()
   if(!lib || !node){ setDebug("No hay biblioteca actual."); return }
+
+  normalizeUrlFieldsFromCombinedInput(false)
 
   const name=entryNameInput.value.trim()
   const image=entryImageInput.value.trim()
@@ -3130,7 +3653,7 @@ async function addEntryAtCurrentNode(){
       editingItemRef.image=image
 
       if(!Array.isArray(editingItemRef.groups)) editingItemRef.groups=[]
-      delete editingItemRef.stations
+      if(!Array.isArray(editingItemRef.stations)) editingItemRef.stations=[]
 
       if(info) editingItemRef.info=info
       else delete editingItemRef.info
@@ -3234,7 +3757,7 @@ async function addEntryAtCurrentNode(){
   }
 
   if(newEntryType==="group"){
-    if(isStationContainer(node)){ setDebug("Dentro de una station solo puedes crear vídeos."); return }
+    if(isStationContainer(node)){ setDebug("Dentro de una station no puedes crear groups."); return }
     if(!Array.isArray(node.groups)) node.groups=[]
 
     const newGroup={name, image, groups:[]}
@@ -3243,13 +3766,16 @@ async function addEntryAtCurrentNode(){
     node.groups.push(newGroup)
 
   }else if(newEntryType==="station"){
-    if(isStationContainer(node)){ setDebug("Dentro de una station solo puedes crear vídeos."); return }
-    if(!Array.isArray(node.stations)) node.stations=[]
-
     const newStation={name, image, stations:[]}
     if(info) newStation.info=info
 
-    node.stations.push(newStation)
+    if(isStationContainer(node)){
+      if(!Array.isArray(node.stations)) node.stations=[]
+      node.stations.push(newStation)
+    }else{
+      if(!Array.isArray(node.groups)) node.groups=[]
+      node.groups.push(newStation)
+    }
 
   }else{
     if(!url){ setDebug("Pon al menos una URL."); return }
@@ -3301,6 +3827,7 @@ function setEntryType(type){
     ensureAtLeastOneUrlField()
     syncUrlFieldButtons()
   }
+  updateEditorActionButtons()
 }
 function saveResolverConfig(){
   RESOLVER_CONFIG.backendUrl=normalizeBackendUrl(RESOLVER_CONFIG.backendUrl)
@@ -3312,9 +3839,15 @@ function saveResolverConfig(){
 function loadResolverConfig(){ try{ return JSON.parse(localStorage.getItem(RESOLVER_KEY)||"null") }catch{return null} }
 
 on(importFile,"change",async (e)=>{ const file=e.target.files?.[0]; if(!file)return; if(importInFlight){ setDebug("Ya hay una importación en curso.\nEspera a que termine antes de cargar otra lista."); e.target.value=""; return } importInFlight=true; updateImportButtons(); try{ const text=await file.text(); await importFromText(text, "") } finally { importInFlight=false; updateImportButtons(); e.target.value="" } })
-on(importUrlBtn,"click",async ()=>{ const url=importUrlInput.value.trim(); if(!url) return; await importFromUrl(url) })
+on(importUrlBtn,"click",async ()=>{ const url=importUrlInput.value.trim(); if(!url) return; await importFromUrl(url); importUrlInput.value=""; showImportUrlBox(false); closeLibraryAddMenu() })
 on(exportCurrentBtn,"click",()=>{ const lib=currentLibrary(); if(!lib){setDebug("No hay biblioteca actual."); return}; const blob=new Blob([JSON.stringify(lib.data,null,2)],{type:"application/json"}); const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=(lib.title||"biblioteca")+".json"; a.click(); URL.revokeObjectURL(a.href) })
-on(clearLibrariesBtn,"click",async ()=>{ libraries=[]; currentLibraryId=null; browserStack=[]; renderLibraryList(); renderBrowser(); await dbRemove(DB_LIBRARIES_KEY); setDebug("Bibliotecas borradas.") })
+on(importFileOptionBtn,"click",()=>{ closeLibraryAddMenu(); importFile?.click() })
+on(importUrlOptionBtn,"click",()=>{ closeLibraryAddMenu(); showImportUrlBox(true) })
+on(cancelEditBtn,"click",()=>{ clearEditorForm(); setEntryType("group") })
+on(editorCutBtn,"click",()=>{ closeAllLibraryMenus(); cutEditingItem() })
+on(editorCopyBtn,"click",()=>{ closeAllLibraryMenus(); copyEditingItem() })
+on(editorPasteBtn,"click",()=>{ closeAllLibraryMenus(); pasteClipboardItem() })
+on(editorDeleteBtn,"click",()=>{ closeAllLibraryMenus(); deleteEditingItemFromEditor() })
 on(backFolderBtn,"click",()=>{
   if(browserStack.length>1){
     browserStack.pop()
@@ -3345,7 +3878,26 @@ on(clearSearchBtn,"click",()=>{
   renderBrowser()
   searchInput?.focus()
 })
-on(sidebarToggleBtn,"click",()=>setSidebarCollapsed(!appRoot?.classList.contains("sidebar-collapsed")))
+on(sidebarToggleBtn,"click",()=>{
+  setSidebarCollapsed(!appRoot?.classList.contains("sidebar-collapsed"))
+  requestAnimationFrame(updateCollapsedLibraryScrollButtons)
+})
+
+on(collapsedScrollUpBtn,"click",()=>{
+  if(!collapsedLibraryIcons) return
+  collapsedLibraryIcons.scrollBy({ top:-220, behavior:"smooth" })
+})
+
+on(collapsedScrollDownBtn,"click",()=>{
+  if(!collapsedLibraryIcons) return
+  collapsedLibraryIcons.scrollBy({ top:220, behavior:"smooth" })
+})
+
+on(collapsedLibraryIcons,"scroll",updateCollapsedLibraryScrollButtons)
+window.addEventListener("resize", updateCollapsedLibraryScrollButtons)
+document.addEventListener("click", (e)=>{
+  if(libraryAddMenu && !libraryAddMenu.contains(e.target)) closeLibraryAddMenu()
+})
 on(typeGroupBtn,"click",()=>setEntryType("group"))
 on(typeStationBtn,"click",()=>setEntryType("station"))
 on(typeVideoBtn,"click",()=>setEntryType("video"))
@@ -3372,6 +3924,7 @@ on(manualResolveBtn,"click",async ()=>{
 on(infoToggleBtn,"click",()=>toggleCurrentInfo())
 on(debugToggleBtn,"click",()=>toggleDebugPanel())
 renderDebugVisibility()
+updateEditorActionButtons()
 
 document.addEventListener('click', (e)=>{
   if(!e.target.closest('.card-menu')) closeAllLibraryMenus()
@@ -3394,6 +3947,7 @@ on(backBtn,"click",()=>jumpBy(-getJumpSeconds()))
 on(forwardBtn,"click",()=>jumpBy(getJumpSeconds()))
 on(forwardBtn,"wheel",(e)=>{ e.preventDefault(); const delta=e.deltaY>0?-1:1; setJumpSeconds(getJumpSeconds()+delta) })
 on(nextItemBtn,"click",async ()=>{ const ok=await playNextInCurrentNode(); if(!ok) setDebug("No hay siguiente vídeo en esta lista.") })
+on(subsBtn,"click",toggleSubtitles)
 on(muteBtn,"click",()=>{ showVolumePanel(); video.muted=!video.muted; updateMuteLabel() })
 on(fullscreenBtn,"click",toggleFullscreen)
 on(volumeRange,"input",()=>{ showVolumePanel(); applyVolume(); saveSettings() })
@@ -3434,7 +3988,7 @@ document.addEventListener("keydown",(e)=>{ const tag=(document.activeElement&&do
   rememberToggle.checked=s.remember!==false
   boostToggle.checked=s.boost!==false
   volumeRange.value=s.volumePercent||100
-  syncJumpUi(); applyVolume(); updatePlayLabel(); updateMuteLabel(); updateFullscreenLabel()
+    syncJumpUi(); applyVolume(); updatePlayLabel(); updateMuteLabel(); updateFullscreenLabel(); updateSubtitleButton()
   const savedResolver=loadResolverConfig()
   if(savedResolver){
     RESOLVER_CONFIG.useBackend=!!savedResolver.useBackend
@@ -3465,6 +4019,8 @@ document.addEventListener("keydown",(e)=>{ const tag=(document.activeElement&&do
 
   updateResolverStatus()
   setSidebarCollapsed(!!s.sidebarCollapsed)
+  renderCollapsedLibraryIcons()
+  requestAnimationFrame(updateCollapsedLibraryScrollButtons)
   hidePlayer(); hideManualResolve(); setEntryType("group"); syncSearchUi(); nowPlayingEl.textContent="Explorador"; setCurrentInfo(""); debugEl.classList.add("hidden")
   updateImportButtons()
   try{

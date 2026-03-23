@@ -11,32 +11,75 @@
 <body>
   <div class="app">
     <aside class="sidebar">
-      <div class="sidebar-collapse-bar">
+      <div class="sidebar-topbar">
         <button id="sidebarToggleBtn" class="btn sidebar-collapse-btn" title="Encoger sidebar">◀</button>
+
+        <div class="sidebar-brand-wrap">
+          <h1 class="sidebar-brand">FairyPlay</h1>
+          <button id="sidebarBackendStatusBtn" class="sidebar-backend-status is-off" type="button" title="Backend apagado">
+            <span id="sidebarBackendStatusDot" class="sidebar-backend-status-dot"></span>
+          </button>
+        </div>
       </div>
-      <h1>FairyPlay</h1>
+
+      <div id="sidebarCollapsedDock" class="sidebar-collapsed-dock">
+        <button id="collapsedBackendBtn" class="collapsed-backend-btn is-off" type="button" title="Backend apagado">
+          <span id="collapsedBackendDot" class="collapsed-backend-dot"></span>
+        </button>
+
+        <button id="collapsedScrollUpBtn" class="btn collapsed-nav-btn hidden" type="button" title="Subir bibliotecas">▲</button>
+
+        <div id="collapsedLibraryIcons" class="collapsed-library-icons"></div>
+
+        <button id="collapsedScrollDownBtn" class="btn collapsed-nav-btn hidden" type="button" title="Bajar bibliotecas">▼</button>
+      </div>
 
       <section class="panel compact">
-        <h2>Bibliotecas</h2>
-        <div class="row">
-          <label class="btn file-btn">
-            Importar JSON
-            <input id="importFile" type="file" hidden />
-          </label>
-          <button id="exportCurrentBtn" class="btn">Exportar actual</button>
+        <div class="section-head">
+          <h2>Bibliotecas</h2>
+          <div class="section-actions">
+            <details id="libraryAddMenu" class="card-menu library-add-menu">
+              <summary class="menu-btn icon-btn" type="button" title="Añadir biblioteca">＋</summary>
+              <div class="menu-pop menu-pop-right">
+                <button id="importFileOptionBtn" class="btn small" type="button">Importar lista</button>
+                <button id="importUrlOptionBtn" class="btn small" type="button">Cargar desde URL</button>
+              </div>
+            </details>
+            <button id="exportCurrentBtn" class="btn icon-btn" type="button" title="Exportar actual">⭳</button>
+          </div>
         </div>
 
-        <label class="label">Cargar desde URL JSON</label>
-        <div class="row">
-          <input id="importUrlInput" class="input grow" type="text" placeholder="URL raw / dropbox / json" />
-          <button id="importUrlBtn" class="btn">Cargar</button>
+        <label class="btn file-btn hidden" id="importFileTrigger">
+          Importar JSON
+          <input id="importFile" type="file" hidden />
+        </label>
+
+        <div id="importUrlBox" class="import-url-box hidden">
+          <label class="label">Cargar desde URL JSON</label>
+          <div class="row">
+            <input id="importUrlInput" class="input grow" type="text" placeholder="URL raw / dropbox / json" />
+            <button id="importUrlBtn" class="btn">Cargar</button>
+          </div>
         </div>
 
         <div id="libraryList" class="library-list"></div>
       </section>
 
 <section class="panel compact">
-  <h2>Crear elemento</h2>
+  <div class="section-head">
+    <h2>Crear elemento</h2>
+    <div class="section-actions">
+      <details id="editorActionsMenu" class="card-menu">
+        <summary class="menu-btn icon-btn" type="button" title="Acciones del editor">⋯</summary>
+        <div class="menu-pop menu-pop-right">
+          <button id="editorCutBtn" class="btn small" type="button">Cortar</button>
+          <button id="editorCopyBtn" class="btn small" type="button">Copiar</button>
+          <button id="editorPasteBtn" class="btn small" type="button">Pegar</button>
+          <button id="editorDeleteBtn" class="btn small danger hidden" type="button">Borrar</button>
+        </div>
+      </details>
+    </div>
+  </div>
 
   <label class="label">Tipo</label>
   <div class="row">
@@ -106,7 +149,7 @@
 
   <div class="row">
     <button id="addEntryBtn" class="btn primary">Añadir aquí</button>
-    <button id="clearLibrariesBtn" class="btn danger">Borrar bibliotecas</button>
+    <button id="cancelEditBtn" class="btn hidden" type="button">Cancelar edición</button>
   </div>
 </section>
 
@@ -177,6 +220,7 @@ Después vuelve a esta página para reproducir los vídeos.
               <input id="progressRange" class="progress" type="range" min="0" max="100" step="0.1" value="0" />
               <div id="timeLabel" class="time-label">00:00 / 00:00</div>
               <button id="nextItemBtn" class="control-btn">⏭</button>
+              <button id="subsBtn" class="control-btn" type="button" title="Subtítulos">Subs OFF</button>
               <div id="volumeWrap" class="volume-wrap">
                 <button id="muteBtn" class="control-btn">🔊</button>
                 <div id="volumePanel" class="volume-panel">
