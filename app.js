@@ -250,6 +250,42 @@ function buildDrmOriginNoticeHtml(){
     </div>
   `
 }
+
+function buildDashUnavailableNoticeHtml(){
+  return `
+    <div style="display:flex;align-items:center;gap:12px;">
+      <img src="logo.png" alt="FairyPlay" style="width:42px;height:42px;object-fit:contain;filter:drop-shadow(0 0 8px rgba(80,160,255,.55));">
+      <div>
+        <div class="player-notice-title">Stream DASH no disponible</div>
+        <div class="player-notice-text">
+          El manifiesto DASH o alguno de sus segmentos no está disponible, no responde o ha sido bloqueado. Este enlace no se puede reproducir ahora mismo.
+        </div>
+      </div>
+    </div>
+  `
+}
+
+function showDashUnavailableNotice(extraText=""){
+  markActiveStatus("dead")
+  showPlayerEmpty("Stream DASH no disponible")
+  showPlayerNotice(buildDashUnavailableNoticeHtml())
+
+  if(extraText){
+    setDebug(`${debugEl?.textContent ? debugEl.textContent + "\n\n" : ""}${extraText}`)
+  }
+}
+
+function dashErrorLooksUnavailable(errorObj){
+  const text=JSON.stringify(errorObj || {}).toLowerCase()
+  return text.includes('"code":25')
+    || text.includes(" is not available")
+    || text.includes("manifesterror")
+    || text.includes("downloaderror")
+    || text.includes("failed to download")
+    || text.includes("cannot download")
+    || text.includes("404")
+    || text.includes("403")
+}
 async function isAceStreamEngineRunning(){
   try{
     const res = await fetch("http://127.0.0.1:6878/webui/api/service?method=get_version", {
@@ -1917,17 +1953,26 @@ if(shouldForceProxyForResolvedHostFile && proxiedFileUrl){
 
       dashPlayer.on(dashEvents.ERROR, (e)=>{
         pushDashDebug(`DASH ERROR:\n${JSON.stringify(e, null, 2)}`)
+
+        if(dashErrorLooksUnavailable(e)){
+          showDashUnavailableNotice("Error DASH: el manifiesto o los segmentos no están disponibles.")
+        }
       })
 
       if(dashEvents.PLAYBACK_ERROR){
         dashPlayer.on(dashEvents.PLAYBACK_ERROR, (e)=>{
           pushDashDebug(`PLAYBACK ERROR:\n${JSON.stringify(e, null, 2)}`)
+
+          if(dashErrorLooksUnavailable(e)){
+            showDashUnavailableNotice("Playback DASH fallido: el stream no está disponible.")
+          }
         })
       }
 
       if(dashEvents.KEY_ERROR){
         dashPlayer.on(dashEvents.KEY_ERROR, (e)=>{
           pushDashDebug(`KEY ERROR:\n${JSON.stringify(e, null, 2)}`)
+          markActiveStatus("dead")
         })
       }
 
@@ -2040,7 +2085,11 @@ if(shouldForceProxyForResolvedHostFile && proxiedFileUrl){
       video.addEventListener("error", ()=>{
         const mediaError=video.error
         if(!mediaError) return
+
         pushDashDebug(`VIDEO ERROR:\ncode=${mediaError.code}\nmessage=${mediaError.message||"sin mensaje"}`)
+        markActiveStatus("dead")
+        showPlayerEmpty("Stream DASH no disponible")
+        showPlayerNotice(buildDashUnavailableNoticeHtml())
       }, { once:false })
 
       dashPlayer.initialize(video, playbackUrl, false)
@@ -4419,7 +4468,8 @@ on(playerWrap,"mouseleave",()=>{ if(!video.paused) playerWrap.classList.add('con
 on(playerWrap,"click",showControlsTemporarily)
 
 video.ontimeupdate=()=>{ const c=video.currentTime||0, d=video.duration||0; progressRange.value=d?(c/d)*100:0; timeLabel.textContent=format(c)+" / "+format(d); if(rememberToggle.checked){ const src=video.currentSrc || video.src; if(src) saveProgress(src,video.currentTime) } }
-video.onplay=()=>{ updatePlayLabel(); showControlsTemporarily(); markActiveStatus("ok") }
+video.onplay=()=>{ updatePlayLabel(); showControlsTemporarily() }
+video.onplaying=()=>{ updatePlayLabel(); showControlsTemporarily(); markActiveStatus("ok") }
 video.onpause=()=>{ updatePlayLabel(); keepControlsVisible() }
 video.onended=async ()=>{ updatePlayLabel(); keepControlsVisible(); if(autoplayToggle.checked){ const ok=await playNextInCurrentNode(); if(!ok) setDebug("Fin de la lista.") } }
 video.onvolumechange=updateMuteLabel
