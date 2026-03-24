@@ -200,14 +200,14 @@
 		  <div id="resolverStatus" style="font-size:12px;margin-bottom:6px;"></div>
           <p class="hint">Soporta: vidmoly, stre4mpay, voe, streamtape, doodstream, mixdrop</p>
 
-          <label class="check hidden">
-            <input id="useBackendToggle" type="checkbox" checked />
-            <span>Usar backend (más fiable)</span>
+          <label class="check">
+            <input id="useBackendToggle" type="checkbox" />
+            <span>Usar localhost por defecto (http://localhost:3000/api/resolve)</span>
           </label>
-          <div id="backendUrlField" style="display:none; margin-top:8px;">
-  <label class="label">URL del backend</label>
-  <input id="backendUrlInput" class="input" type="text" placeholder="http://localhost:3000/api/resolve" />
-</div>
+          <div id="backendUrlField" style="margin-top:8px;">
+            <label class="label">URL del backend</label>
+            <input id="backendUrlInput" class="input" type="text" placeholder="http://localhost:3000/api/resolve" />
+          </div>
           <p class="hint" style="margin-top:8px;">⚠ El resolvedor embebido puede no funcionar en todos los sitios debido a CORS.</p>
         </section>
 	  

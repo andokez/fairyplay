@@ -236,6 +236,20 @@ function buildInactiveNoticeHtml(){
     </div>
   `
 }
+
+function buildDrmOriginNoticeHtml(){
+  return `
+    <div style="display:flex;align-items:center;gap:12px;">
+      <img src="logo.png" alt="FairyPlay" style="width:42px;height:42px;object-fit:contain;filter:drop-shadow(0 0 8px rgba(80,160,255,.55));">
+      <div>
+        <div class="player-notice-title">DRM no permitido en este origen</div>
+        <div class="player-notice-text">
+          Este stream necesita DRM y el navegador lo está bloqueando porque FairyPlay está abierto desde <b>file://</b> o desde un origen no válido. Abre FairyPlay desde <b>http://localhost:3000</b>.
+        </div>
+      </div>
+    </div>
+  `
+}
 async function isAceStreamEngineRunning(){
   try{
     const res = await fetch("http://127.0.0.1:6878/webui/api/service?method=get_version", {
@@ -270,9 +284,30 @@ function applyBackendStatusVisual(state, title){
   }
 }
 
-if(useBackendToggle){
-  useBackendToggle.checked=true
-  useBackendToggle.disabled=true
+function getDefaultResolverBackendUrl(){
+  return DEFAULT_BACKEND_URL
+}
+
+function isUsingDefaultResolverBackend(){
+  return normalizeBackendUrl(RESOLVER_CONFIG.backendUrl)===getDefaultResolverBackendUrl()
+}
+
+function syncResolverBackendUi(){
+  if(useBackendToggle){
+    useBackendToggle.checked=isUsingDefaultResolverBackend()
+  }
+
+  if(useBackendToggleMenu){
+    useBackendToggleMenu.checked=isUsingDefaultResolverBackend()
+  }
+
+  if(backendUrlInput){
+    backendUrlInput.value=normalizeBackendUrl(RESOLVER_CONFIG.backendUrl)
+  }
+
+  if(backendUrlField){
+    backendUrlField.style.display="block"
+  }
 }
 
 async function updateResolverStatus() {
@@ -280,8 +315,10 @@ async function updateResolverStatus() {
   if(!el) return
 
   const backendUrl=normalizeBackendUrl(RESOLVER_CONFIG.backendUrl)
+  const isDefault=isUsingDefaultResolverBackend()
+  const sourceLabel=isDefault ? "localhost" : "personalizado"
 
-  if(!RESOLVER_CONFIG.backendUrl){
+  if(!backendUrl){
     el.textContent="⚪ Backend sin configurar"
     applyBackendStatusVisual("off", "Backend sin configurar")
     return
@@ -294,15 +331,15 @@ async function updateResolverStatus() {
     })
 
     if(r.ok){
-      el.textContent=`🟢 Backend activo: ${backendUrl}`
-      applyBackendStatusVisual("on", `Backend activo: ${backendUrl}`)
+      el.textContent=`🟢 Backend ${sourceLabel} activo: ${backendUrl}`
+      applyBackendStatusVisual("on", `Backend ${sourceLabel} activo: ${backendUrl}`)
     }else{
-      el.textContent=`🔴 Backend sin respuesta: ${backendUrl}`
-      applyBackendStatusVisual("off", `Backend sin respuesta: ${backendUrl}`)
+      el.textContent=`🔴 Backend ${sourceLabel} sin respuesta: ${backendUrl}`
+      applyBackendStatusVisual("off", `Backend ${sourceLabel} sin respuesta: ${backendUrl}`)
     }
   } catch (e) {
-    el.textContent = `🔴 Backend no detectado: ${backendUrl}`
-    applyBackendStatusVisual("off", `Backend no detectado: ${backendUrl}`)
+    el.textContent = `🔴 Backend ${sourceLabel} no detectado: ${backendUrl}`
+    applyBackendStatusVisual("off", `Backend ${sourceLabel} no detectado: ${backendUrl}`)
   }
 }
 
@@ -2239,8 +2276,18 @@ if(shouldUseAudioBoost){
       })
     }
   }catch(e){
+    const errorText=String(e?.message || e || "")
+    const isDrmOriginError=/EME use is not allowed on unique origins/i.test(errorText)
+
     markActiveStatus("dead")
-    setDebug(String(e))
+
+    if(isDrmOriginError){
+      showPlayerEmpty("DRM no permitido en file://")
+      showPlayerNotice(buildDrmOriginNoticeHtml())
+      setDebug(`DRM bloqueado por origen no válido.\nAbre FairyPlay desde http://localhost:3000\n\n${errorText}`)
+    }else{
+      setDebug(errorText)
+    }
   }
 }
 function playYoutubeUrl(url,title){
@@ -4408,32 +4455,60 @@ document.addEventListener("keydown",(e)=>{ const tag=(document.activeElement&&do
   }
 
   if(useBackendToggle){
-    useBackendToggle.checked = RESOLVER_CONFIG.useBackend
-    if(useBackendToggleMenu) useBackendToggleMenu.checked = RESOLVER_CONFIG.useBackend
-    backendUrlInput.value = RESOLVER_CONFIG.backendUrl
-    backendUrlField.style.display = RESOLVER_CONFIG.useBackend ? "block" : "none"
+    syncResolverBackendUi()
 
     useBackendToggle.addEventListener("change", () => {
-      RESOLVER_CONFIG.useBackend = useBackendToggle.checked
-      if(useBackendToggleMenu) useBackendToggleMenu.checked = useBackendToggle.checked
-      backendUrlField.style.display = useBackendToggle.checked ? "block" : "none"
+      if(useBackendToggle.checked){
+        RESOLVER_CONFIG.backendUrl = getDefaultResolverBackendUrl()
+      }else{
+        const typedValue=normalizeBackendUrl(backendUrlInput?.value || "")
+        RESOLVER_CONFIG.backendUrl = typedValue || getDefaultResolverBackendUrl()
+      }
+
+      RESOLVER_CONFIG.useBackend = true
+      syncResolverBackendUi()
       saveResolverConfig()
       updateResolverStatus()
     })
 
     if(useBackendToggleMenu){
       useBackendToggleMenu.addEventListener("change", () => {
-        RESOLVER_CONFIG.useBackend = useBackendToggleMenu.checked
-        useBackendToggle.checked = useBackendToggleMenu.checked
-        backendUrlField.style.display = useBackendToggleMenu.checked ? "block" : "none"
+        if(useBackendToggleMenu.checked){
+          RESOLVER_CONFIG.backendUrl = getDefaultResolverBackendUrl()
+        }else{
+          const typedValue=normalizeBackendUrl(backendUrlInput?.value || "")
+          RESOLVER_CONFIG.backendUrl = typedValue || getDefaultResolverBackendUrl()
+        }
+
+        RESOLVER_CONFIG.useBackend = true
+        syncResolverBackendUi()
         saveResolverConfig()
         updateResolverStatus()
       })
     }
 
+    backendUrlInput.addEventListener("input", () => {
+      const typedValue=normalizeBackendUrl(backendUrlInput.value)
+
+      if(!typedValue){
+        return
+      }
+
+      RESOLVER_CONFIG.backendUrl = typedValue
+      RESOLVER_CONFIG.useBackend = true
+
+      const isDefault=typedValue===getDefaultResolverBackendUrl()
+      if(useBackendToggle) useBackendToggle.checked=isDefault
+      if(useBackendToggleMenu) useBackendToggleMenu.checked=isDefault
+    })
+
     backendUrlInput.addEventListener("change", () => {
-      RESOLVER_CONFIG.backendUrl = normalizeBackendUrl(backendUrlInput.value)
-      backendUrlInput.value = RESOLVER_CONFIG.backendUrl
+      const typedValue=normalizeBackendUrl(backendUrlInput.value)
+
+      RESOLVER_CONFIG.backendUrl = typedValue || getDefaultResolverBackendUrl()
+      RESOLVER_CONFIG.useBackend = true
+
+      syncResolverBackendUi()
       saveResolverConfig()
       updateResolverStatus()
     })
