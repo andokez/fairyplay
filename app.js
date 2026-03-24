@@ -265,7 +265,20 @@ function buildDashUnavailableNoticeHtml(){
   `
 }
 
-function showDashUnavailableNotice(extraText=""){
+function killDashPlayback(extraText=""){
+  try{
+    if(dashPlayer){
+      dashPlayer.reset()
+      dashPlayer=null
+    }
+  }catch{}
+
+  try{
+    video.pause()
+    video.removeAttribute("src")
+    video.load()
+  }catch{}
+
   markActiveStatus("dead")
   showPlayerEmpty("Stream DASH no disponible")
   showPlayerNotice(buildDashUnavailableNoticeHtml())
@@ -279,12 +292,17 @@ function dashErrorLooksUnavailable(errorObj){
   const text=JSON.stringify(errorObj || {}).toLowerCase()
   return text.includes('"code":25')
     || text.includes(" is not available")
+    || text.includes('"status":403')
+    || text.includes('"status":404')
+    || text.includes('"statustext":"forbidden"')
+    || text.includes('"statustext":"not found"')
+    || text.includes("403 forbidden")
+    || text.includes("404 not found")
     || text.includes("manifesterror")
     || text.includes("downloaderror")
     || text.includes("failed to download")
     || text.includes("cannot download")
-    || text.includes("404")
-    || text.includes("403")
+    || text.includes("forbidden")
 }
 async function isAceStreamEngineRunning(){
   try{
@@ -1955,7 +1973,7 @@ if(shouldForceProxyForResolvedHostFile && proxiedFileUrl){
         pushDashDebug(`DASH ERROR:\n${JSON.stringify(e, null, 2)}`)
 
         if(dashErrorLooksUnavailable(e)){
-          showDashUnavailableNotice("Error DASH: el manifiesto o los segmentos no están disponibles.")
+          killDashPlayback("Error DASH: el manifiesto o los segmentos no están disponibles o el servidor está devolviendo 403/404.")
         }
       })
 
@@ -1964,7 +1982,7 @@ if(shouldForceProxyForResolvedHostFile && proxiedFileUrl){
           pushDashDebug(`PLAYBACK ERROR:\n${JSON.stringify(e, null, 2)}`)
 
           if(dashErrorLooksUnavailable(e)){
-            showDashUnavailableNotice("Playback DASH fallido: el stream no está disponible.")
+            killDashPlayback("Playback DASH fallido: el stream no está disponible.")
           }
         })
       }
@@ -1972,7 +1990,7 @@ if(shouldForceProxyForResolvedHostFile && proxiedFileUrl){
       if(dashEvents.KEY_ERROR){
         dashPlayer.on(dashEvents.KEY_ERROR, (e)=>{
           pushDashDebug(`KEY ERROR:\n${JSON.stringify(e, null, 2)}`)
-          markActiveStatus("dead")
+          killDashPlayback("KEY ERROR: fallo de clave o DRM en stream DASH.")
         })
       }
 
@@ -1998,10 +2016,11 @@ if(shouldForceProxyForResolvedHostFile && proxiedFileUrl){
       if(dashEvents.STREAM_INITIALIZED){
         dashPlayer.on(dashEvents.STREAM_INITIALIZED, ()=>{
           pushDashDebug(`STREAM INITIALIZED`)
+          markActiveStatus("ok")
           setTimeout(()=>kickDashPlayback("stream_initialized"), 0)
           setTimeout(()=>kickDashPlayback("stream_initialized+300ms"), 300)
           setTimeout(()=>kickDashPlayback("stream_initialized+900ms"), 900)
-		  setTimeout(()=>kickDashPlayback("stream_initialized+2000ms"), 2000)
+          setTimeout(()=>kickDashPlayback("stream_initialized+2000ms"), 2000)
         })
       }
 
@@ -2087,9 +2106,7 @@ if(shouldForceProxyForResolvedHostFile && proxiedFileUrl){
         if(!mediaError) return
 
         pushDashDebug(`VIDEO ERROR:\ncode=${mediaError.code}\nmessage=${mediaError.message||"sin mensaje"}`)
-        markActiveStatus("dead")
-        showPlayerEmpty("Stream DASH no disponible")
-        showPlayerNotice(buildDashUnavailableNoticeHtml())
+        killDashPlayback(`VIDEO ERROR:\ncode=${mediaError.code}\nmessage=${mediaError.message||"sin mensaje"}`)
       }, { once:false })
 
       dashPlayer.initialize(video, playbackUrl, false)
@@ -4469,7 +4486,16 @@ on(playerWrap,"click",showControlsTemporarily)
 
 video.ontimeupdate=()=>{ const c=video.currentTime||0, d=video.duration||0; progressRange.value=d?(c/d)*100:0; timeLabel.textContent=format(c)+" / "+format(d); if(rememberToggle.checked){ const src=video.currentSrc || video.src; if(src) saveProgress(src,video.currentTime) } }
 video.onplay=()=>{ updatePlayLabel(); showControlsTemporarily() }
-video.onplaying=()=>{ updatePlayLabel(); showControlsTemporarily(); markActiveStatus("ok") }
+video.onplaying=()=>{
+  updatePlayLabel()
+  showControlsTemporarily()
+
+  if(dashPlayer){
+    return
+  }
+
+  markActiveStatus("ok")
+}
 video.onpause=()=>{ updatePlayLabel(); keepControlsVisible() }
 video.onended=async ()=>{ updatePlayLabel(); keepControlsVisible(); if(autoplayToggle.checked){ const ok=await playNextInCurrentNode(); if(!ok) setDebug("Fin de la lista.") } }
 video.onvolumechange=updateMuteLabel
