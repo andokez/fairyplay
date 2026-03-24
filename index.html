@@ -15,10 +15,29 @@
         <button id="sidebarToggleBtn" class="btn sidebar-collapse-btn" title="Encoger sidebar">◀</button>
 
         <div class="sidebar-brand-wrap">
-          <h1 class="sidebar-brand">FairyPlay</h1>
-          <button id="sidebarBackendStatusBtn" class="sidebar-backend-status is-off" type="button" title="Backend apagado">
-            <span id="sidebarBackendStatusDot" class="sidebar-backend-status-dot"></span>
-          </button>
+          <div class="sidebar-brand-left">
+            <h1 class="sidebar-brand">FairyPlay</h1>
+            <button id="sidebarBackendStatusBtn" class="sidebar-backend-status is-off" type="button" title="Backend apagado" aria-hidden="true" tabindex="-1">
+              <span id="sidebarBackendStatusDot" class="sidebar-backend-status-dot"></span>
+            </button>
+          </div>
+          <details id="sidebarOptionsMenu" class="card-menu sidebar-options-menu">
+            <summary class="menu-btn icon-btn sidebar-options-trigger" type="button" title="Opciones">⋯</summary>
+            <div class="menu-pop menu-pop-right sidebar-options-pop">
+              <label class="menu-toggle-row">
+                <span>Autoplay siguiente</span>
+                <input id="menuAutoplayToggle" type="checkbox" checked />
+              </label>
+              <label class="menu-toggle-row">
+                <span>Modo edición</span>
+                <input id="editModeToggle" type="checkbox" checked />
+              </label>
+              <label class="menu-toggle-row">
+                <span>Mostrar resolvedor</span>
+                <input id="showResolverToggle" type="checkbox" />
+              </label>
+            </div>
+          </details>
         </div>
       </div>
 
@@ -55,9 +74,9 @@
         </label>
 
         <div id="importUrlBox" class="import-url-box hidden">
-          <label class="label">Cargar desde URL JSON</label>
+          <label class="label">Cargar desde URL</label>
           <div class="row">
-            <input id="importUrlInput" class="input grow" type="text" placeholder="URL raw / dropbox / json" />
+            <input id="importUrlInput" class="input grow" type="text" placeholder="URL raw / GitHub / m3u / json" />
             <button id="importUrlBtn" class="btn">Cargar</button>
           </div>
         </div>
@@ -65,7 +84,7 @@
         <div id="libraryList" class="library-list"></div>
       </section>
 
-<section class="panel compact">
+<section id="editorPanel" class="panel compact">
   <div class="section-head">
     <h2>Crear elemento</h2>
     <div class="section-actions">
@@ -153,7 +172,7 @@
   </div>
 </section>
 
-      <section class="panel compact">
+      <section id="optionsPanel" class="panel compact hidden">
         <h2>Opciones</h2>
         <label class="check">
           <input id="autoplayToggle" type="checkbox" checked />
@@ -166,7 +185,7 @@
         <p class="hint">Rueda del ratón sobre <b>+tiempo</b> para cambiar el salto.</p>
         <p class="hint">Click central en lateral izquierdo/derecho del vídeo para atrás/adelante.</p>
         </section>
-        <section class="panel compact">
+        <section id="resolverPanel" class="panel compact hidden">
           <h2>Resolvedor de streams</h2>
 		  <div id="resolverStatus" style="font-size:12px;margin-bottom:6px;"></div>
           <p class="hint">Soporta: vidmoly, stre4mpay, voe, streamtape, doodstream, mixdrop</p>
@@ -183,8 +202,8 @@
 Descarga el resolvedor, descomprime el ZIP y ejecuta <b>iniciar-resolver.bat</b>.<br>
 Después vuelve a esta página para reproducir los vídeos.
 </p>
-          <label class="check">
-            <input id="useBackendToggle" type="checkbox" />
+          <label class="check hidden">
+            <input id="useBackendToggle" type="checkbox" checked />
             <span>Usar backend (más fiable)</span>
           </label>
           <div id="backendUrlField" style="display:none; margin-top:8px;">
@@ -203,6 +222,7 @@ Después vuelve a esta página para reproducir los vídeos.
             <div id="playerEmpty" class="player-empty">
               <div class="player-placeholder-text">Vídeo no cargado</div>
             </div>
+            <div id="playerNotice" class="player-notice hidden"></div>
             <video id="video" playsinline></video>
             <iframe id="youtubeFrame" class="youtube-frame hidden" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen referrerpolicy="origin-when-cross-origin"></iframe>
             <div id="clickLayer" class="click-layer"></div>
@@ -240,7 +260,7 @@ Después vuelve a esta página para reproducir los vídeos.
             <div id="infoPanel" class="info-panel hidden"></div>
           </div>
 
-          <button id="debugToggleBtn" class="btn debug-inline-btn" type="button">Consola</button>
+          <button id="debugToggleBtn" class="debug-inline-link" type="button">Consola</button>
         </div>
 
         <pre id="debug" class="debug hidden"></pre>

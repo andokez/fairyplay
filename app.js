@@ -4,6 +4,7 @@ const on = (el, evt, fn) => { if (el) el.addEventListener(evt, fn) }
 const video=$("video")
 const playerWrap=$("playerWrap")
 const playerEmpty=$("playerEmpty")
+const playerNotice=$("playerNotice")
 const playerSection=$("playerSection")
 const clickLayer=$("clickLayer")
 const leftHit=$("leftHit")
@@ -44,6 +45,14 @@ const addEntryBtn=$("addEntryBtn")
 const libraryList=$("libraryList")
 const autoplayToggle=$("autoplayToggle")
 const rememberToggle=$("rememberToggle")
+const menuAutoplayToggle=$("menuAutoplayToggle")
+const editModeToggle=$("editModeToggle")
+const showResolverToggle=$("showResolverToggle")
+const useBackendToggleMenu=$("useBackendToggleMenu")
+const editorPanel=$("editorPanel")
+const optionsPanel=$("optionsPanel")
+const resolverPanel=$("resolverPanel")
+const sidebarOptionsMenu=$("sidebarOptionsMenu")
 const playPauseBtn=$("playPauseBtn")
 const backBtn=$("backBtn")
 const forwardBtn=$("forwardBtn")
@@ -114,6 +123,8 @@ let currentInfoExpanded=false
 let debugExpanded=false
 let openRequestSeq=0
 let activeOpenRequestId=0
+let activeStatusOriginalUrl=""
+let activeStatusPlaybackUrl=""
 
 const SETTINGS_KEY="player_v14_settings"
 const PROGRESS_KEY="player_v14_progress"
@@ -139,6 +150,85 @@ function normalizeBackendUrl(value){
   return clean.replace(/\/+$/,"")
 }
 
+function convertAceStreamUrl(url){
+  const raw=String(url||"").trim()
+  if(!raw) return ""
+
+  if(/^acestream:\/\//i.test(raw)){
+    const id=raw.replace(/^acestream:\/\//i,"").trim()
+    return id ? `http://127.0.0.1:6878/ace/manifest.m3u8?content_id=${encodeURIComponent(id)}` : raw
+  }
+
+  if(/^magnet:\?xt=urn:btih:/i.test(raw)){
+    const match=raw.match(/btih:([^&]+)/i)
+    const hash=match?.[1]?.trim()
+    return hash ? `http://127.0.0.1:6878/ace/manifest.m3u8?infohash=${encodeURIComponent(hash)}` : raw
+  }
+
+  if(/^[a-fA-F0-9]{40}$/.test(raw)){
+    return `http://127.0.0.1:6878/ace/manifest.m3u8?infohash=${encodeURIComponent(raw)}`
+  }
+
+  return raw
+}
+
+function isAceStreamInput(url){
+  const raw=String(url||"").trim()
+  return /^acestream:\/\//i.test(raw) || /^magnet:\?xt=urn:btih:/i.test(raw) || /^[a-fA-F0-9]{40}$/.test(raw)
+}
+
+function isAceStreamEngineUrl(url){
+  const raw=String(url||"").trim().toLowerCase()
+  return raw.startsWith("http://127.0.0.1:6878/ace/") || raw.startsWith("http://localhost:6878/ace/")
+}
+
+function showPlayerNotice(html){
+  if(!playerNotice) return
+  playerNotice.innerHTML=html||""
+  playerNotice.classList.toggle("hidden", !String(html||"").trim())
+}
+
+function hidePlayerNotice(){
+  if(!playerNotice) return
+  playerNotice.innerHTML=""
+  playerNotice.classList.add("hidden")
+}
+
+function getAceStreamDownloadUrl(){
+  return "https://docs.acestream.net/products/"
+}
+
+function buildAceStreamNoticeHtml(){
+  return `
+    <div class="player-notice-title">Ace Stream Engine no está abierto</div>
+    <div class="player-notice-text">
+      FairyPlay puede reproducir enlaces AceStream dentro del reproductor, pero necesita que <b>Ace Stream Engine</b> esté instalado y ejecutándose en este dispositivo.
+    </div>
+    <div class="player-notice-actions">
+      <a class="btn primary" href="${getAceStreamDownloadUrl()}" target="_blank" rel="noopener noreferrer">Descargar Ace Stream Engine</a>
+    </div>
+  `
+}
+function buildAceStreamDeadNoticeHtml(){
+  return `
+    <div class="player-notice-title">Enlace AceStream no activo</div>
+    <div class="player-notice-text">
+      Ace Stream Engine está abierto, pero este contenido no responde o ya no está activo.
+    </div>
+  `
+}
+async function isAceStreamEngineRunning(){
+  try{
+    const res = await fetch("http://127.0.0.1:6878/webui/api/service?method=get_version", {
+      method: "GET"
+    })
+    if(!res.ok) return false
+    const data = await res.json().catch(()=>null)
+    return !!data?.result?.version
+  }catch{
+    return false
+  }
+}
 function applyBackendStatusVisual(state, title){
   const isOn=state==="on"
   const targets=[
@@ -148,6 +238,7 @@ function applyBackendStatusVisual(state, title){
 
   for(const target of targets){
     if(target.btn){
+      target.btn.classList.remove("hidden")
       target.btn.classList.toggle("is-on", isOn)
       target.btn.classList.toggle("is-off", !isOn)
       target.btn.title=title
@@ -160,15 +251,20 @@ function applyBackendStatusVisual(state, title){
   }
 }
 
+if(useBackendToggle){
+  useBackendToggle.checked=true
+  useBackendToggle.disabled=true
+}
+
 async function updateResolverStatus() {
   const el=document.getElementById("resolverStatus")
   if(!el) return
 
   const backendUrl=normalizeBackendUrl(RESOLVER_CONFIG.backendUrl)
 
-  if(!RESOLVER_CONFIG.useBackend){
-    el.textContent="⚪ Backend desactivado"
-    applyBackendStatusVisual("off", "Backend desactivado")
+  if(!RESOLVER_CONFIG.backendUrl){
+    el.textContent="⚪ Backend sin configurar"
+    applyBackendStatusVisual("off", "Backend sin configurar")
     return
   }
 
@@ -209,6 +305,19 @@ function toggleDebugPanel(){
   debugExpanded=!debugExpanded
   renderDebugVisibility()
 updateEditorActionButtons()
+}
+
+function syncMenuToggles(){
+  if(menuAutoplayToggle) menuAutoplayToggle.checked=!!autoplayToggle?.checked
+}
+
+function applyVisibilitySettings(){
+  const editOn=editModeToggle?editModeToggle.checked!==false:true
+  const resolverOn=!!showResolverToggle?.checked
+  if(editorPanel) editorPanel.classList.toggle("hidden", !editOn)
+  if(resolverPanel) resolverPanel.classList.toggle("hidden", !resolverOn)
+  if(optionsPanel) optionsPanel.classList.add("hidden")
+  renderBrowser()
 }
 
 function formatInfoText(value){
@@ -282,6 +391,7 @@ function showPlayerEmpty(message="Vídeo no válido"){
   if(playerEmpty) playerEmpty.innerHTML='<div class="player-placeholder-text">'+escapeHtml(message)+'</div>'
 }
 function showPlayerLoaded(){
+  hidePlayerNotice()
   showPlayer()
   if(playerWrap) playerWrap.classList.remove("is-empty")
   if(playerEmpty) playerEmpty.classList.add("hidden")
@@ -332,7 +442,8 @@ function showYoutubeFrame(embedUrl){
   showEmbedFrame(embedUrl)
 }
 function loadSettings(){try{return JSON.parse(localStorage.getItem(SETTINGS_KEY)||"{}")}catch{return{}}}
-function saveSettings(){ const s=loadSettings(); s.autoplay=autoplayToggle.checked; s.remember=rememberToggle.checked; s.jumpSeconds=getJumpSeconds(); s.volumePercent=Number(volumeRange.value)||100; s.sidebarCollapsed=!!appRoot?.classList.contains("sidebar-collapsed"); localStorage.setItem(SETTINGS_KEY,JSON.stringify(s)); applyVolume() }
+function saveSettings(){ const s=loadSettings(); s.autoplay=autoplayToggle.checked; s.remember=rememberToggle.checked; s.editMode=editModeToggle?editModeToggle.checked!==false:true; s.showResolver=!!showResolverToggle?.checked; s.jumpSeconds=getJumpSeconds(); s.volumePercent=Number(volumeRange.value)||100; s.sidebarCollapsed=!!appRoot?.classList.contains("sidebar-collapsed"); localStorage.setItem(SETTINGS_KEY,JSON.stringify(s)); applyVolume() }
+function isEditModeOn(){ return editModeToggle ? editModeToggle.checked!==false : true }
 function loadProgressMap(){try{return JSON.parse(localStorage.getItem(PROGRESS_KEY)||"{}")}catch{return{}}}
 function saveProgress(url,time){const map=loadProgressMap(); map[url]=time; localStorage.setItem(PROGRESS_KEY,JSON.stringify(map))}
 function getProgress(url){const map=loadProgressMap(); return map[url]||0}
@@ -397,7 +508,32 @@ function getLinkStatusDot(url){
   const status=getLinkStatus(url)
   if(status==="dead") return '<span class="status-dot dead" title="Enlace muerto"></span>'
   if(status==="ok") return '<span class="status-dot ok" title="Visto / funciona"></span>'
+  if(status==="checking") return '<span class="status-dot checking" title="Comprobando..."></span>'
   return ""
+}
+function setActiveStatusUrls(originalUrl="", playbackUrl=""){
+  activeStatusOriginalUrl=String(originalUrl||"").trim()
+  activeStatusPlaybackUrl=String(playbackUrl||"").trim()
+}
+function clearActiveStatusUrls(){
+  activeStatusOriginalUrl=""
+  activeStatusPlaybackUrl=""
+}
+function applyStatusToUrlPair(status, originalUrl="", playbackUrl=""){
+  const originalKey=String(originalUrl||"").trim()
+  const playbackKey=String(playbackUrl||"").trim()
+
+  if(originalKey) setLinkStatus(originalKey, status)
+  if(playbackKey && playbackKey!==originalKey) setLinkStatus(playbackKey, status)
+
+  renderBrowser()
+}
+function setCheckingStatus(originalUrl="", playbackUrl=""){
+  setActiveStatusUrls(originalUrl, playbackUrl)
+  applyStatusToUrlPair("checking", originalUrl, playbackUrl)
+}
+function markActiveStatus(status){
+  applyStatusToUrlPair(status, activeStatusOriginalUrl, activeStatusPlaybackUrl)
 }
 function scrollBrowserToTop(){
   const target=contextPanel || document.querySelector(".browser")
@@ -533,6 +669,14 @@ function extractAround(text, pos, radius=50){
   return text.slice(start, end)
 }
 
+function stripJsonNoise(text){
+  let out=String(text||"").replace(/^\uFEFF/, "")
+  out=out.replace(/^\s*```(?:json)?\s*/i, "")
+  out=out.replace(/\s*```\s*$/i, "")
+  out=out.replace(/,\s*(?=[}\]])/g, "")
+  return out.trim()
+}
+
 function normalizeBrokenJsonLikeText(input){
   const src=String(input||"").replace(/^[\uFEFF\u200B]+/, "")
   let out=""
@@ -665,6 +809,8 @@ function parseLibraryText(text){
   }
 
   const payload=extractLikelyJsonPayload(raw)
+  const cleanPayload=stripJsonNoise(payload)
+  const cleanRaw=stripJsonNoise(raw)
 
   const repairBrokenArrayObjects=(input)=>{
     let out=String(input||"")
@@ -700,10 +846,15 @@ function parseLibraryText(text){
   const repairedAndNormalized=normalizeBrokenJsonLikeText(repairBrokenArrayObjects(payload))
 
   push("original", raw)
+  push("raw-limpio", cleanRaw)
   push("payload", payload)
+  push("payload-limpio", cleanPayload)
   push("array-objects", repairedPayload)
+  push("array-objects-limpio", stripJsonNoise(repairedPayload))
   push("normalizado", normalizedPayload)
+  push("normalizado-limpio", stripJsonNoise(normalizedPayload))
   push("array-objects-normalizado", repairedAndNormalized)
+  push("array-objects-normalizado-limpio", stripJsonNoise(repairedAndNormalized))
   push("normalizado-2", normalizeBrokenJsonLikeText(repairedAndNormalized))
 
   let lastError=""
@@ -930,6 +1081,7 @@ function getServerMenuButtonsHtml(item){
 function startOpenRequest(){
   const requestId=++openRequestSeq
   activeOpenRequestId=requestId
+  clearActiveStatusUrls()
 
   try{ video.pause() }catch{}
   try{ video.removeAttribute("src") }catch{}
@@ -1083,6 +1235,18 @@ function isYoutubeUrl(url){
   return /(?:youtube\.com|youtu\.be)/i.test(String(url||""))
 }
 
+function isKrakenEmbedUrl(url){
+  const raw=String(url||"").trim()
+  if(!raw) return false
+
+  try{
+    const u=new URL(raw)
+    return /(^|\.)krakenfiles\.com$/i.test(u.hostname) && /^\/embed-video\//i.test(u.pathname)
+  }catch{
+    return false
+  }
+}
+
 function getYoutubeEmbedUrl(url){
   const raw=String(url||"").trim()
   try{
@@ -1202,7 +1366,7 @@ ${cached.url}`)
 
   let resolvedUrl=null
 
-  if(RESOLVER_CONFIG.useBackend){
+  if(RESOLVER_CONFIG.backendUrl){
     resolvedUrl = await backendResolver(originalUrl, false, referer)
     if (resolvedUrl) {
       setResolveCache(cacheKey, resolvedUrl)
@@ -1230,7 +1394,7 @@ ${cached.url}`)
 }
 async function resolveStreamUrlManual(originalUrl, referer="") {
   if (!needsResolution(originalUrl)) return originalUrl
-  if (!RESOLVER_CONFIG.useBackend) { setDebug("La resolución manual necesita backend activo."); return null }
+  if (!RESOLVER_CONFIG.backendUrl) { setDebug("La resolución manual necesita backend configurado."); return null }
   setDebug("Abriendo ventana manual para captcha / continue...\nHaz el captcha, pulsa Proceed to video y espera a que se cierre sola.")
   return await backendResolver(originalUrl, true, referer)
 }
@@ -1528,6 +1692,7 @@ function showControlsTemporarily(){ if(!playerWrap) return; playerWrap.classList
 function keepControlsVisible(){ if(!playerWrap) return; if(controlsHideTimer) clearTimeout(controlsHideTimer); playerWrap.classList.remove('controls-hidden') }
 
 async function playUrl(url,title,item=null){
+  hidePlayerNotice()
   hideYoutubeFrame()
   destroyPlayers()
   showPlayerLoaded()
@@ -1538,10 +1703,44 @@ async function playUrl(url,title,item=null){
 
   try{
     const originalUrl=String(url||"").trim()
+    const aceUrl=convertAceStreamUrl(originalUrl)
+    const aceInputDetected=isAceStreamInput(originalUrl) || isAceStreamEngineUrl(aceUrl)
+    let aceEngineRunning=false
 
-    const type=inferType(originalUrl)
+    setActiveStatusUrls(item?.url || originalUrl, aceUrl)
+
+    if(aceInputDetected){
+      aceEngineRunning = await isAceStreamEngineRunning()
+
+      if(!aceEngineRunning){
+        markActiveStatus("dead")
+        showPlayerEmpty("Ace Stream Engine no está abierto")
+        showPlayerNotice(buildAceStreamNoticeHtml())
+        setDebug(
+`AceStream detectado:
+${originalUrl}
+
+Convertido a HLS local:
+${aceUrl}
+
+Ace Stream Engine no responde en 127.0.0.1:6878.
+Instálalo o ábrelo y vuelve a probar.`)
+        return
+      }
+    }
+
+    const type=inferType(aceUrl)
     const drm=getDrmConfigFromItem(item)
-    let playbackUrl=originalUrl
+    let playbackUrl=aceUrl
+
+    if(aceInputDetected){
+      setDebug(
+`AceStream detectado:
+${originalUrl}
+
+Convertido a HLS local:
+${playbackUrl}`)
+    }
 
     const explicitProxyHeaders=getProxyHeadersFromItem(item, { includeImplicit:false })
 
@@ -1553,7 +1752,7 @@ async function playUrl(url,title,item=null){
       )
 
     const shouldProxyGoogleHostedMedia =
-      isGoogleHostedMediaUrl(originalUrl)
+      isGoogleHostedMediaUrl(playbackUrl)
 
 const shouldForceProxyForResolvedHostFile =
   type==="file" &&
@@ -1571,7 +1770,7 @@ const shouldTryProxyFallbackForFile =
 
 const proxiedFileUrl =
   shouldTryProxyFallbackForFile
-    ? buildBackendMediaProxyUrl(originalUrl, item)
+    ? buildBackendMediaProxyUrl(playbackUrl, item)
     : ""
 
 if(shouldForceProxyForResolvedHostFile && proxiedFileUrl){
@@ -1580,10 +1779,10 @@ if(shouldForceProxyForResolvedHostFile && proxiedFileUrl){
 }
 
     if(shouldProxyDash){
-      playbackUrl=buildBackendMediaProxyUrl(originalUrl, item)
+      playbackUrl=buildBackendMediaProxyUrl(playbackUrl, item)
       setDebug(`Reproduciendo MPD vía proxy:\n${playbackUrl}`)
     }else if(shouldProxyGoogleHostedMedia){
-      playbackUrl=buildBackendMediaProxyUrl(originalUrl, item)
+      playbackUrl=buildBackendMediaProxyUrl(playbackUrl, item)
       setDebug(`Reproduciendo Google media vía proxy:\n${playbackUrl}`)
     }else if(!shouldForceProxyForResolvedHostFile){
       setDebug(`Reproduciendo directo:\n${originalUrl}`)
@@ -1593,7 +1792,7 @@ if(shouldForceProxyForResolvedHostFile && proxiedFileUrl){
       dashPlayer=dashjs.MediaPlayer().create()
 
       const dashProxyHeaders=getProxyHeadersFromItem(item, { includeImplicit:true })
-      const originalDashBase=new URL(url)
+      const originalDashBase=new URL(playbackUrl)
       const dashDebugLines=[]
       const pushDashDebug=(msg)=>{
         const line=String(msg||"").trim()
@@ -1878,6 +2077,18 @@ if(shouldForceProxyForResolvedHostFile && proxiedFileUrl){
                 setDebug((debugEl?.textContent ? debugEl.textContent + "\n" : "") + `HLS ERROR:\n${JSON.stringify(data, null, 2)}`)
               }catch{}
 
+              markActiveStatus("dead")
+
+              if(aceInputDetected || isAceStreamEngineUrl(playbackUrl)){
+                if(aceEngineRunning){
+                  showPlayerEmpty("Enlace AceStream no activo")
+                  showPlayerNotice(buildAceStreamDeadNoticeHtml())
+                }else{
+                  showPlayerEmpty("Ace Stream Engine no está abierto")
+                  showPlayerNotice(buildAceStreamNoticeHtml())
+                }
+              }
+
               if(!usingProxy && shouldAllowProxyFallback){
                 const fallbackByErrorType =
                   data?.type===Hls.ErrorTypes.NETWORK_ERROR ||
@@ -1908,13 +2119,13 @@ if(shouldForceProxyForResolvedHostFile && proxiedFileUrl){
           hlsPlayer.attachMedia(video)
         }
 
-        setDebug(`Reproduciendo HLS directo:\n${originalUrl}`)
-        startHls(originalUrl)
+        setDebug(`Reproduciendo HLS directo:\n${playbackUrl}`)
+        startHls(playbackUrl)
 		setTimeout(updateSubtitleButton, 500)
         setTimeout(updateSubtitleButton, 1500)
       } else {
-        setDebug(`Reproduciendo HLS directo:\n${originalUrl}`)
-        video.src=originalUrl
+        setDebug(`Reproduciendo HLS directo:\n${playbackUrl}`)
+        video.src=playbackUrl
         video.addEventListener("error", attachNativeFallback, { once:true })
       }
     }
@@ -1935,6 +2146,14 @@ if(shouldForceProxyForResolvedHostFile && proxiedFileUrl){
         }
 
         video.addEventListener("error", retryViaProxy, { once:true })
+      }
+
+      if(aceInputDetected || isAceStreamEngineUrl(playbackUrl)){
+        video.addEventListener("error", ()=>{
+          showPlayerEmpty("Ace Stream Engine no está abierto")
+          showPlayerNotice(buildAceStreamNoticeHtml())
+          setDebug((debugEl?.textContent ? debugEl.textContent + "\n\n" : "") + "AceStream no disponible. Abre Ace Stream Engine y vuelve a probar.")
+        }, { once:true })
       }
 
       video.src=playbackUrl
@@ -1975,10 +2194,12 @@ if(shouldUseAudioBoost){
       })
     }
   }catch(e){
+    markActiveStatus("dead")
     setDebug(String(e))
   }
 }
 function playYoutubeUrl(url,title){
+  hidePlayerNotice()
   const embedUrl=getYoutubeEmbedUrl(url)
   if(!embedUrl){
     setDebug("No se pudo convertir el enlace de YouTube.")
@@ -2421,8 +2642,77 @@ function parseM3uText(text, sourceUrl=""){
   }
 }
 
+function normalizeImportedStationItem(it){
+  const item=it && typeof it==="object" ? it : {}
+  const out={
+    name:item.title||item.name||"Sin título",
+    image:item.image||item.img||item.logo||item.poster||"",
+    url:item.url||item.link||item.file||item.src||""
+  }
+
+  if(item.info || item.description) out.info=item.info||item.description
+  if(item.import!=null) out.import=!!item.import
+  if(item.embed!=null) out.embed=isEmbedStation(item)
+  if(item.referer || item.referrer) out.referer=item.referer||item.referrer
+  if(item.userAgent || item["user-agent"]) out.userAgent=item.userAgent||item["user-agent"]
+  if(item.headers && typeof item.headers==="object") out.headers={...item.headers}
+  if(item.drm && typeof item.drm==="object") out.drm=structuredClone(item.drm)
+  if(item.kid) out.kid=item.kid
+  if(item.key) out.key=item.key
+  return out
+}
+
+function normalizeImportedGroupNode(group){
+  const node=group && typeof group==="object" ? group : {}
+  const rawGroups =
+    Array.isArray(node.groups) ? node.groups :
+    Array.isArray(node.channels) ? node.channels :
+    Array.isArray(node.items) ? node.items :
+    Array.isArray(node.children) ? node.children : []
+
+  const rawStations =
+    Array.isArray(node.stations) ? node.stations :
+    Array.isArray(node.channels) && !Array.isArray(node.groups) ? node.channels.filter(x => x && (x.url || x.link || x.file || x.src)) :
+    Array.isArray(node.items) && !Array.isArray(node.groups) ? node.items.filter(x => x && (x.url || x.link || x.file || x.src)) :
+    []
+
+  const groups=[]
+  const stations=[]
+
+  for(const entry of rawGroups){
+    if(!entry || typeof entry!=="object") continue
+    const hasChildren = Array.isArray(entry.groups) || Array.isArray(entry.stations) || Array.isArray(entry.channels) || Array.isArray(entry.items) || Array.isArray(entry.children)
+    const hasUrl = !!(entry.url || entry.link || entry.file || entry.src)
+
+    if(hasChildren && !hasUrl){
+      groups.push(normalizeImportedGroupNode(entry))
+    }else if(hasUrl){
+      stations.push(normalizeImportedStationItem(entry))
+    }
+  }
+
+  for(const entry of rawStations){
+    if(!entry || typeof entry!=="object") continue
+    stations.push(normalizeImportedStationItem(entry))
+  }
+
+  return {
+    name:node.name||node.title||"Lista",
+    image:node.image||node.img||node.logo||"",
+    info:node.info||node.description||"",
+    groups,
+    stations
+  }
+}
+
 function normalizeImportedData(raw, sourceUrl=""){
-  if(raw && Array.isArray(raw.groups)) return raw
+  if(raw && typeof raw==="object" && Array.isArray(raw.groups)){
+    return {
+      ...raw,
+      url:raw.url||sourceUrl||"",
+      groups:raw.groups.map(group=>normalizeImportedGroupNode(group))
+    }
+  }
 
   if(Array.isArray(raw)){
     return {
@@ -2434,14 +2724,47 @@ function normalizeImportedData(raw, sourceUrl=""){
         name:"Lista",
         image:"",
         groups:[],
-        stations:raw.map(it=>({
-          name:it.title||it.name||"Sin título",
-          image:it.image||it.img||"",
-          url:it.url||"",
-          import:!!it.import,
-          embed:isEmbedStation(it)
-        }))
+        stations:raw.map(it=>normalizeImportedStationItem(it))
       }]
+    }
+  }
+
+  if(raw && typeof raw==="object"){
+    const rootGroups =
+      Array.isArray(raw.groups) ? raw.groups :
+      Array.isArray(raw.channels) ? raw.channels :
+      Array.isArray(raw.items) ? raw.items :
+      Array.isArray(raw.children) ? raw.children : null
+
+    const rootStations =
+      Array.isArray(raw.stations) ? raw.stations :
+      Array.isArray(raw.list) ? raw.list : null
+
+    if(rootGroups){
+      return {
+        name:raw.name||raw.title||"Biblioteca importada",
+        image:raw.image||raw.img||raw.logo||"",
+        author:raw.author||"",
+        info:raw.info||raw.description||"",
+        url:raw.url||sourceUrl||"",
+        groups:rootGroups.map(group=>normalizeImportedGroupNode(group))
+      }
+    }
+
+    if(rootStations){
+      return {
+        name:raw.name||raw.title||"Biblioteca importada",
+        image:raw.image||raw.img||raw.logo||"",
+        author:raw.author||"",
+        info:raw.info||raw.description||"",
+        url:raw.url||sourceUrl||"",
+        groups:[{
+          name:"Lista",
+          image:"",
+          groups:[],
+          stations:rootStations.map(it=>normalizeImportedStationItem(it))
+        }]
+      }
     }
   }
 
@@ -2474,12 +2797,42 @@ function looksLikeJsonPayload(text){
   const parsed=safeJsonParse(trimmed)
   return parsed.ok
 }
-async function tryFetchText(url){
+function buildTextFetchAttempts(url){
   const fixed=normalizeDropboxUrl(url)
   const attempts=[
-    { url: fixed, label: "directa", mode: "cors" },
-    { url: "https://api.allorigins.win/raw?url="+encodeURIComponent(fixed), label: "allorigins", mode: "cors" }
+    { url: fixed, label: "directa", mode: "cors" }
   ]
+
+  try{
+    const u=new URL(fixed)
+
+    if(/(^|\.)raw\.githubusercontent\.com$/i.test(u.hostname)){
+      const parts=u.pathname.replace(/^\//,"").split("/")
+      if(parts.length>=4){
+        const owner=parts[0]
+        const repo=parts[1]
+        const branch=parts[2]
+        const rest=parts.slice(3).join("/")
+
+        attempts.push({
+          url:`https://cdn.jsdelivr.net/gh/${owner}/${repo}@${branch}/${rest}`,
+          label:"jsdelivr",
+          mode:"cors"
+        })
+        attempts.push({
+          url:`https://raw.githack.com/${owner}/${repo}/${branch}/${rest}`,
+          label:"raw.githack",
+          mode:"cors"
+        })
+      }
+    }
+  }catch{}
+
+  attempts.push({
+    url: "https://api.allorigins.win/raw?url="+encodeURIComponent(fixed),
+    label: "allorigins",
+    mode: "cors"
+  })
 
   if(RESOLVER_CONFIG.useBackend){
     const backendBase=normalizeBackendUrl(RESOLVER_CONFIG.backendUrl).replace(/\/api\/resolve$/i, "/api/fetch-text")
@@ -2491,6 +2844,11 @@ async function tryFetchText(url){
     })
   }
 
+  return attempts
+}
+
+async function tryFetchText(url){
+  const attempts=buildTextFetchAttempts(url)
   let lastErr="No se pudo cargar"
 
   for(const attempt of attempts){
@@ -2501,14 +2859,14 @@ async function tryFetchText(url){
       let rawText=""
       if(attempt.isBackend){
         const data=await res.json()
-        if(!data?.success || !data?.text) throw new Error(data?.error || "Respuesta vacía")
+        if(!data?.success || typeof data?.text!=="string") throw new Error(data?.error || "Respuesta vacía")
         rawText=data.text
       }else{
         rawText=await res.text()
       }
 
-      const text=extractLikelyJsonPayload(rawText)
-      if(!text || !text.trim()) throw new Error("Respuesta vacía")
+      const text=String(rawText||"").replace(/^\uFEFF/, "")
+      if(!text.trim()) throw new Error("Respuesta vacía")
       return text
     }catch(e){
       lastErr=`${attempt.label}: ${e?.message||e}`
@@ -2577,7 +2935,7 @@ async function persistLibrariesNow(){ return await queueSaveLibraries() }
 
 async function importFromText(text, sourceUrl=""){
   const parsed=parseLibraryText(text)
-  if(!parsed.ok){ setDebug(`Formato inválido.\n${parsed.error||"Error desconocido"}`); return false }
+  if(!parsed.ok){ setDebug(`Formato inválido o lista no reconocida.\n${parsed.error||"Error desconocido"}`); return false }
   if(parsed.error) setDebug(parsed.error)
 
   const data=normalizeImportedData(parsed.data, sourceUrl)
@@ -3247,9 +3605,8 @@ async function openStation(item, options={}) {
 
     if(isYoutubeUrl(originalUrl)){
       if(!isOpenRequestCurrent(requestId)) return
-      setLinkStatus(item?.url || originalUrl, "ok")
-      setLinkStatus(originalUrl, "ok")
-      renderBrowser()
+      setCheckingStatus(item?.url || originalUrl, originalUrl)
+      markActiveStatus("ok")
       playYoutubeUrl(originalUrl, item?.name || item?.title || "YouTube")
       return
     }
@@ -3260,9 +3617,8 @@ async function openStation(item, options={}) {
       if(!isOpenRequestCurrent(requestId)) return
 
       if(previewUrl){
-        setLinkStatus(item?.url || originalUrl, "ok")
-        setLinkStatus(originalUrl, "ok")
-        renderBrowser()
+        setCheckingStatus(item?.url || originalUrl, originalUrl)
+        markActiveStatus("ok")
         currentPlayableTitle=item?.name || item?.title || "Google Drive"
         nowPlayingEl.textContent=item?.name || item?.title || "Google Drive"
         showPlayerLoaded()
@@ -3272,6 +3628,19 @@ async function openStation(item, options={}) {
       }
 
       continue
+    }
+
+    if(isKrakenEmbedUrl(originalUrl)){
+      if(!isOpenRequestCurrent(requestId)) return
+
+      setCheckingStatus(item?.url || originalUrl, originalUrl)
+      markActiveStatus("ok")
+      currentPlayableTitle=item?.name || item?.title || "Krakenfiles"
+      nowPlayingEl.textContent=item?.name || item?.title || "Krakenfiles"
+      showPlayerLoaded()
+      showEmbedFrame(originalUrl)
+      setDebug(`Reproduciendo ${source.label} dentro del panel con el reproductor embebido de Krakenfiles:\n${originalUrl}`)
+      return
     }
 
 if (isEmbedStation(item)) {
@@ -3313,9 +3682,7 @@ Pulsa el botón para abrir la ventana.`)
 
     if(!isOpenRequestCurrent(requestId)) return
 
-    setLinkStatus(item?.url || originalUrl, "ok")
-    setLinkStatus(originalUrl, "ok")
-    renderBrowser()
+    setCheckingStatus(item?.url || originalUrl, urlToPlay)
 
     const resolvedFromHost = needsResolution(originalUrl)
     const resolvedIsDirectMedia = isDirectMediaUrl(urlToPlay)
@@ -3340,8 +3707,7 @@ ${urlToPlay}`)
   if(!isOpenRequestCurrent(requestId)) return
 
   clearResolveCache(makeResolveCacheKey(item?.url || firstSourceUrl, item?.referer || ""))
-  setLinkStatus(item?.url || firstSourceUrl, "dead")
-  renderBrowser()
+  applyStatusToUrlPair("dead", item?.url || firstSourceUrl, firstSourceUrl)
   showPlayerEmpty("Vídeo no válido o enlace muerto")
 
   if(!isGoogleDriveUrl(lastManualResolveUrl || firstSourceUrl)){
@@ -3474,12 +3840,14 @@ function renderBrowser(){
     '<div class="card-type">'+(isGroup ? 'Carpeta' : (stationContainer ? 'Carpeta' : 'Vídeo'))+'</div>'+
     '<div class="card-title">'+escapeHtml(item.name || item.title || "Sin título")+'</div>'+
     '<div class="card-meta">'+escapeHtml(meta)+'</div>'+
-    '<details class="card-menu browser-item-menu">'+
-      '<summary class="menu-btn" type="button">⋮</summary>'+
-      '<div class="menu-pop">'+
-        '<button class="btn small edit-item" type="button">Editar</button>'+
-      '</div>'+
-    '</details>'+
+    (isEditModeOn()
+      ? '<details class="card-menu browser-item-menu">'+
+          '<summary class="menu-btn" type="button">⋮</summary>'+
+          '<div class="menu-pop">'+
+            '<button class="btn small edit-item" type="button">Editar</button>'+
+          '</div>'+
+        '</details>'
+      : '')+
   '</div>'
 
       card.addEventListener("click", async ()=>{
@@ -3565,7 +3933,7 @@ card.querySelector(".edit-item")?.addEventListener("click",(e)=>{
         '<div class="card-meta">'+escapeHtml(meta)+'</div>'+
         (item.import?'<div class="card-badge">IMPORT</div>':'')+
         (isEmbedStation(item)?'<div class="card-badge">EMBED</div>':'')+
-        '<details class="card-menu browser-item-menu"><summary class="menu-btn" type="button">⋮</summary><div class="menu-pop"><button class="btn small move-left" type="button">Mover izda</button><button class="btn small move-right" type="button">Mover dcha</button>'+getServerMenuButtonsHtml(item)+'<button class="btn small edit-item" type="button">Editar</button></div></details>'+
+        (isEditModeOn() ? '<details class="card-menu browser-item-menu"><summary class="menu-btn" type="button">⋮</summary><div class="menu-pop"><button class="btn small move-left" type="button">Mover izda</button><button class="btn small move-right" type="button">Mover dcha</button>'+getServerMenuButtonsHtml(item)+'<button class="btn small edit-item" type="button">Editar</button></div></details>' : '')+
       '</div>'
 
     card.onclick=async ()=>{
@@ -3888,6 +4256,7 @@ on(collapsedLibraryIcons,"scroll",updateCollapsedLibraryScrollButtons)
 window.addEventListener("resize", updateCollapsedLibraryScrollButtons)
 document.addEventListener("click", (e)=>{
   if(libraryAddMenu && !libraryAddMenu.contains(e.target)) closeLibraryAddMenu()
+  if(sidebarOptionsMenu && !sidebarOptionsMenu.contains(e.target)) sidebarOptionsMenu.removeAttribute("open")
 })
 on(typeGroupBtn,"click",()=>setEntryType("group"))
 on(typeStationBtn,"click",()=>setEntryType("station"))
@@ -3914,6 +4283,9 @@ on(manualResolveBtn,"click",async ()=>{
 })
 on(infoToggleBtn,"click",()=>toggleCurrentInfo())
 on(debugToggleBtn,"click",()=>toggleDebugPanel())
+on(menuAutoplayToggle,"change",()=>{ if(autoplayToggle) autoplayToggle.checked=menuAutoplayToggle.checked; saveSettings() })
+on(editModeToggle,"change",()=>{ applyVisibilitySettings(); saveSettings() })
+on(showResolverToggle,"change",()=>{ applyVisibilitySettings(); saveSettings() })
 renderDebugVisibility()
 updateEditorActionButtons()
 
@@ -3947,7 +4319,7 @@ on(volumeWrap,"mouseleave",hideVolumePanelSoon)
 on(muteBtn,"focus",showVolumePanel)
 on(volumeRange,"focus",showVolumePanel)
 on(volumeRange,"blur",hideVolumePanelSoon)
-on(autoplayToggle,"change",saveSettings)
+on(autoplayToggle,"change",()=>{ syncMenuToggles(); saveSettings() })
 on(rememberToggle,"change",saveSettings)
 on(progressRange,"input",()=>{ const d=video.duration||0; video.currentTime=d*(progressRange.value/100) })
 on(playerWrap,"mousemove",showControlsTemporarily)
@@ -3955,10 +4327,11 @@ on(playerWrap,"mouseleave",()=>{ if(!video.paused) playerWrap.classList.add('con
 on(playerWrap,"click",showControlsTemporarily)
 
 video.ontimeupdate=()=>{ const c=video.currentTime||0, d=video.duration||0; progressRange.value=d?(c/d)*100:0; timeLabel.textContent=format(c)+" / "+format(d); if(rememberToggle.checked){ const src=video.currentSrc || video.src; if(src) saveProgress(src,video.currentTime) } }
-video.onplay=()=>{ updatePlayLabel(); showControlsTemporarily() }
+video.onplay=()=>{ updatePlayLabel(); showControlsTemporarily(); markActiveStatus("ok") }
 video.onpause=()=>{ updatePlayLabel(); keepControlsVisible() }
 video.onended=async ()=>{ updatePlayLabel(); keepControlsVisible(); if(autoplayToggle.checked){ const ok=await playNextInCurrentNode(); if(!ok) setDebug("Fin de la lista.") } }
 video.onvolumechange=updateMuteLabel
+video.onerror=()=>{ markActiveStatus("dead") }
 document.addEventListener("fullscreenchange",updateFullscreenLabel)
 
 on(clickLayer,"click",()=>{ const now=Date.now(); if(now-lastClickTime<250){ toggleFullscreen(); lastClickTime=0; return } lastClickTime=now; setTimeout(()=>{ if(lastClickTime&&Date.now()-lastClickTime>=240){ togglePlay(); lastClickTime=0 } },260) })
@@ -3976,8 +4349,11 @@ document.addEventListener("keydown",(e)=>{ const tag=(document.activeElement&&do
   const s=loadSettings()
   autoplayToggle.checked=s.autoplay!==false
   rememberToggle.checked=s.remember!==false
+  if(menuAutoplayToggle) menuAutoplayToggle.checked=autoplayToggle.checked
+  if(editModeToggle) editModeToggle.checked=s.editMode!==false
+  if(showResolverToggle) showResolverToggle.checked=!!s.showResolver
   volumeRange.value=s.volumePercent||100
-    syncJumpUi(); applyVolume(); updatePlayLabel(); updateMuteLabel(); updateFullscreenLabel(); updateSubtitleButton()
+    syncJumpUi(); applyVolume(); updatePlayLabel(); updateMuteLabel(); updateFullscreenLabel(); updateSubtitleButton(); applyVisibilitySettings(); syncMenuToggles()
   const savedResolver=loadResolverConfig()
   if(savedResolver){
     RESOLVER_CONFIG.useBackend=!!savedResolver.useBackend
@@ -3988,15 +4364,27 @@ document.addEventListener("keydown",(e)=>{ const tag=(document.activeElement&&do
 
   if(useBackendToggle){
     useBackendToggle.checked = RESOLVER_CONFIG.useBackend
+    if(useBackendToggleMenu) useBackendToggleMenu.checked = RESOLVER_CONFIG.useBackend
     backendUrlInput.value = RESOLVER_CONFIG.backendUrl
     backendUrlField.style.display = RESOLVER_CONFIG.useBackend ? "block" : "none"
 
     useBackendToggle.addEventListener("change", () => {
       RESOLVER_CONFIG.useBackend = useBackendToggle.checked
+      if(useBackendToggleMenu) useBackendToggleMenu.checked = useBackendToggle.checked
       backendUrlField.style.display = useBackendToggle.checked ? "block" : "none"
       saveResolverConfig()
       updateResolverStatus()
     })
+
+    if(useBackendToggleMenu){
+      useBackendToggleMenu.addEventListener("change", () => {
+        RESOLVER_CONFIG.useBackend = useBackendToggleMenu.checked
+        useBackendToggle.checked = useBackendToggleMenu.checked
+        backendUrlField.style.display = useBackendToggleMenu.checked ? "block" : "none"
+        saveResolverConfig()
+        updateResolverStatus()
+      })
+    }
 
     backendUrlInput.addEventListener("change", () => {
       RESOLVER_CONFIG.backendUrl = normalizeBackendUrl(backendUrlInput.value)
@@ -4007,6 +4395,8 @@ document.addEventListener("keydown",(e)=>{ const tag=(document.activeElement&&do
   }
 
   updateResolverStatus()
+  applyVisibilitySettings()
+  syncMenuToggles()
   setSidebarCollapsed(!!s.sidebarCollapsed)
   renderCollapsedLibraryIcons()
   requestAnimationFrame(updateCollapsedLibraryScrollButtons)
