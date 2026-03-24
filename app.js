@@ -211,9 +211,28 @@ function buildAceStreamNoticeHtml(){
 }
 function buildAceStreamDeadNoticeHtml(){
   return `
-    <div class="player-notice-title">Enlace AceStream no activo</div>
-    <div class="player-notice-text">
-      Ace Stream Engine está abierto, pero este contenido no responde o ya no está activo.
+    <div style="display:flex;align-items:center;gap:12px;">
+      <img src="logo.png" alt="FairyPlay" style="width:42px;height:42px;object-fit:contain;filter:drop-shadow(0 0 8px rgba(80,160,255,.55));">
+      <div>
+        <div class="player-notice-title">Enlace AceStream no activo</div>
+        <div class="player-notice-text">
+          Ace Stream Engine está abierto, pero este contenido no responde o ya no está activo.
+        </div>
+      </div>
+    </div>
+  `
+}
+
+function buildInactiveNoticeHtml(){
+  return `
+    <div style="display:flex;align-items:center;gap:12px;">
+      <img src="logo.png" alt="FairyPlay" style="width:42px;height:42px;object-fit:contain;filter:drop-shadow(0 0 8px rgba(80,160,255,.55));">
+      <div>
+        <div class="player-notice-title">Enlace no activo</div>
+        <div class="player-notice-text">
+          Este contenido no responde, no carga correctamente o ya no está disponible.
+        </div>
+      </div>
     </div>
   `
 }
@@ -2072,48 +2091,51 @@ if(shouldForceProxyForResolvedHostFile && proxiedFileUrl){
           })
 
           hlsPlayer.on(Hls.Events.ERROR, (_event, data)=>{
-            if(data?.fatal){
-              try{
-                setDebug((debugEl?.textContent ? debugEl.textContent + "\n" : "") + `HLS ERROR:\n${JSON.stringify(data, null, 2)}`)
-              }catch{}
+  if(data?.fatal){
+    try{
+      setDebug((debugEl?.textContent ? debugEl.textContent + "\n" : "") + `HLS ERROR:\n${JSON.stringify(data, null, 2)}`)
+    }catch{}
 
-              markActiveStatus("dead")
+    if(!usingProxy && shouldAllowProxyFallback){
+      const fallbackByErrorType =
+        data?.type===Hls.ErrorTypes.NETWORK_ERROR ||
+        data?.type===Hls.ErrorTypes.MEDIA_ERROR ||
+        data?.details===Hls.ErrorDetails.MANIFEST_LOAD_ERROR ||
+        data?.details===Hls.ErrorDetails.MANIFEST_LOAD_TIMEOUT ||
+        data?.details===Hls.ErrorDetails.LEVEL_LOAD_ERROR ||
+        data?.details===Hls.ErrorDetails.LEVEL_LOAD_TIMEOUT ||
+        data?.details===Hls.ErrorDetails.FRAG_LOAD_ERROR ||
+        data?.details===Hls.ErrorDetails.FRAG_LOAD_TIMEOUT
 
-              if(aceInputDetected || isAceStreamEngineUrl(playbackUrl)){
-                if(aceEngineRunning){
-                  showPlayerEmpty("Enlace AceStream no activo")
-                  showPlayerNotice(buildAceStreamDeadNoticeHtml())
-                }else{
-                  showPlayerEmpty("Ace Stream Engine no está abierto")
-                  showPlayerNotice(buildAceStreamNoticeHtml())
-                }
-              }
+      if(fallbackByErrorType){
+        fallbackTried=true
+        usingProxy=true
+        try{ hlsPlayer.destroy() }catch{}
+        hlsPlayer=null
 
-              if(!usingProxy && shouldAllowProxyFallback){
-                const fallbackByErrorType =
-                  data?.type===Hls.ErrorTypes.NETWORK_ERROR ||
-                  data?.type===Hls.ErrorTypes.MEDIA_ERROR ||
-                  data?.details===Hls.ErrorDetails.MANIFEST_LOAD_ERROR ||
-                  data?.details===Hls.ErrorDetails.MANIFEST_LOAD_TIMEOUT ||
-                  data?.details===Hls.ErrorDetails.LEVEL_LOAD_ERROR ||
-                  data?.details===Hls.ErrorDetails.LEVEL_LOAD_TIMEOUT ||
-                  data?.details===Hls.ErrorDetails.FRAG_LOAD_ERROR ||
-                  data?.details===Hls.ErrorDetails.FRAG_LOAD_TIMEOUT
+        setDebug((debugEl?.textContent ? debugEl?.textContent + "\n" : "") + `Reintentando HLS vía proxy:\n${proxiedHlsUrl}`)
 
-                if(fallbackByErrorType){
-                  fallbackTried=true
-                  usingProxy=true
-                  try{ hlsPlayer.destroy() }catch{}
-                  hlsPlayer=null
+        startHls(proxiedHlsUrl)
+        return
+      }
+    }
 
-                  setDebug((debugEl?.textContent ? debugEl?.textContent + "\n" : "") + `Reintentando HLS vía proxy:\n${proxiedHlsUrl}`)
+    markActiveStatus("dead")
 
-                  startHls(proxiedHlsUrl)
-                  return
-                }
-              }
-            }
-          })
+    if(aceInputDetected || isAceStreamEngineUrl(playbackUrl)){
+      if(aceEngineRunning){
+        showPlayerEmpty("Enlace AceStream no activo")
+        showPlayerNotice(buildAceStreamDeadNoticeHtml())
+      }else{
+        showPlayerEmpty("Ace Stream Engine no está abierto")
+        showPlayerNotice(buildAceStreamNoticeHtml())
+      }
+    }else{
+      showPlayerEmpty("Enlace no activo")
+      showPlayerNotice(buildInactiveNoticeHtml())
+    }
+  }
+})
 
           hlsPlayer.loadSource(sourceUrl)
           hlsPlayer.attachMedia(video)
@@ -2129,35 +2151,58 @@ if(shouldForceProxyForResolvedHostFile && proxiedFileUrl){
         video.addEventListener("error", attachNativeFallback, { once:true })
       }
     }
-    else {
-      if(shouldTryProxyFallbackForFile && proxiedFileUrl && proxiedFileUrl!==playbackUrl){
-        const retryViaProxy = ()=>{
-          video.removeEventListener("error", retryViaProxy)
+   else {
+  let retriedViaProxy=false
 
-          setDebug(`Directo falló, reintentando vía proxy:\n${proxiedFileUrl}`)
+  const showFinalDeadNotice = ()=>{
+    markActiveStatus("dead")
 
-          video.src=proxiedFileUrl
-          video.load()
-          video.play().catch((err)=>{
-            try{
-              setDebug((debugEl?.textContent ? debugEl.textContent + "\n" : "") + `PLAY ERROR:\n${err?.message || err}`)
-            }catch{}
-          })
-        }
-
-        video.addEventListener("error", retryViaProxy, { once:true })
+    if(aceInputDetected || isAceStreamEngineUrl(playbackUrl)){
+      if(aceEngineRunning){
+        showPlayerEmpty("Enlace AceStream no activo")
+        showPlayerNotice(buildAceStreamDeadNoticeHtml())
+        setDebug((debugEl?.textContent ? debugEl.textContent + "\n\n" : "") + "AceStream abierto, pero el contenido no está activo.")
+      }else{
+        showPlayerEmpty("Ace Stream Engine no está abierto")
+        showPlayerNotice(buildAceStreamNoticeHtml())
+        setDebug((debugEl?.textContent ? debugEl.textContent + "\n\n" : "") + "AceStream no disponible. Abre Ace Stream Engine y vuelve a probar.")
       }
-
-      if(aceInputDetected || isAceStreamEngineUrl(playbackUrl)){
-        video.addEventListener("error", ()=>{
-          showPlayerEmpty("Ace Stream Engine no está abierto")
-          showPlayerNotice(buildAceStreamNoticeHtml())
-          setDebug((debugEl?.textContent ? debugEl.textContent + "\n\n" : "") + "AceStream no disponible. Abre Ace Stream Engine y vuelve a probar.")
-        }, { once:true })
-      }
-
-      video.src=playbackUrl
+    }else{
+      showPlayerEmpty("Enlace no activo")
+      showPlayerNotice(buildInactiveNoticeHtml())
+      setDebug((debugEl?.textContent ? debugEl.textContent + "\n\n" : "") + "El enlace no responde o ya no está disponible.")
     }
+  }
+
+  if(shouldTryProxyFallbackForFile && proxiedFileUrl && proxiedFileUrl!==playbackUrl){
+    const retryViaProxy = ()=>{
+      video.removeEventListener("error", retryViaProxy)
+      retriedViaProxy=true
+
+      setDebug(`Directo falló, reintentando vía proxy:\n${proxiedFileUrl}`)
+
+      video.addEventListener("error", showFinalDeadNotice, { once:true })
+
+      video.src=proxiedFileUrl
+      video.load()
+      video.play().catch((err)=>{
+        try{
+          setDebug((debugEl?.textContent ? debugEl.textContent + "\n" : "") + `PLAY ERROR:\n${err?.message || err}`)
+        }catch{}
+      })
+    }
+
+    video.addEventListener("error", retryViaProxy, { once:true })
+  }else{
+    video.addEventListener("error", showFinalDeadNotice, { once:true })
+  }
+
+  if((aceInputDetected || isAceStreamEngineUrl(playbackUrl)) && !shouldTryProxyFallbackForFile){
+    video.addEventListener("error", showFinalDeadNotice, { once:true })
+  }
+
+  video.src=playbackUrl
+}
 
    const shouldUseAudioBoost = false
 
