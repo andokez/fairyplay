@@ -624,16 +624,23 @@ function setItemSeen(itemOrKey, seen=true, stack=getCurrentContentStack()){
   saveSeenMap(map)
   if(seen) clearContentProgress(key)
 }
-function getItemPlaybackBadgesHtml(item, stack=getCurrentContentStack()){
+function getItemPlaybackStateHtml(item, stack=getCurrentContentStack()){
   if(!isPlayableLeaf(item) || item?.import) return ""
   const key=getContentKey(item, stack)
-  const badges=[]
-  if(isItemSeen(key)) badges.push('<div class="card-badge card-badge-seen">VISTO</div>')
-  else{
-    const progress=getContentProgress(key)
-    if(progress>=15) badges.push('<div class="card-badge card-badge-progress">▶ '+escapeHtml(format(progress))+'</div>')
-  }
-  return badges.join("")
+  if(isItemSeen(key)) return '<div class="card-overlay-badge card-overlay-badge-seen">VISTO</div>'
+  const progress=getContentProgress(key)
+  if(progress>=15) return '<div class="card-time-overlay">▶ ' + escapeHtml(format(progress)) + '</div>'
+  return ""
+}
+function getItemPlaybackMenuHtml(item, stack=getCurrentContentStack()){
+  if(!isPlayableLeaf(item) || item?.import) return ""
+  const key=getContentKey(item, stack)
+  const seen=isItemSeen(key)
+  const progress=getContentProgress(key)
+  return [
+    `<button class="btn small toggle-seen" type="button">${seen ? "Marcar no visto" : "Marcar visto"}</button>`,
+    progress>=15 ? '<button class="btn small clear-progress" type="button">Borrar progreso</button>' : ""
+  ].join("")
 }
 function setupResumeForItem(item, stack=getCurrentContentStack()){
   currentPlayableItem=item || null
@@ -1622,6 +1629,46 @@ function getServerMenuButtonsHtml(item){
   ).join("")
 }
 
+function getItemImageBadgesHtml(item, stack=getCurrentContentStack(), rightHtml=""){
+  const leftParts=[]
+
+  const infoBtn=getInfoQuickButtonHtml(item)
+  const playbackState=getItemPlaybackStateHtml(item, stack)
+
+  if(infoBtn) leftParts.push(infoBtn)
+  if(playbackState) leftParts.push(playbackState)
+
+  const leftHtml=leftParts.join("")
+  const rightClean=String(rightHtml||"")
+
+  if(!leftHtml && !rightClean) return ""
+
+  return '<div class="card-image-overlays">' +
+    '<div class="card-image-overlays-left">' + leftHtml + '</div>' +
+    '<div class="card-image-overlays-right">' + rightClean + '</div>' +
+  '</div>'
+}
+function getBrowserItemMenuHtml(item, opts={}){
+  const isVideo=!!opts.isVideo
+  const editMode=!!opts.editMode
+  const stack=opts.stack || getCurrentContentStack()
+  const parts=[]
+  if(editMode){
+    parts.push(getMoveMenuButtonsHtml())
+    parts.push('<div class="menu-inline-group move-item-pop hidden"><button class="btn small move-left" type="button">Izquierda</button><button class="btn small move-right" type="button">Derecha</button></div>')
+  }
+  if(isVideo){
+    parts.push(getServerMenuButtonsHtml(item))
+    parts.push(getItemPlaybackMenuHtml(item, stack))
+  }
+  if(editMode){
+    parts.push('<button class="btn small edit-item" type="button">Editar</button>')
+  }
+  const inner=parts.filter(Boolean).join("")
+  if(!inner) return ""
+  return '<details class="card-menu browser-item-menu"><summary class="menu-btn" type="button">⋮</summary><div class="menu-pop">'+inner+'</div></details>'
+}
+
 function getMoveMenuButtonsHtml(){
   return `<button class="btn small move-item" type="button">Mover</button>`
 }
@@ -2368,11 +2415,7 @@ ${playbackUrl}`)
     const explicitProxyHeaders=getProxyHeadersFromItem(item, { includeImplicit:false })
 
     const shouldProxyDash =
-      type==="dash" &&
-      (
-        !!drm ||
-        Object.keys(explicitProxyHeaders).length>0
-      )
+      type==="dash"
 
     const shouldProxyGoogleHostedMedia =
       isGoogleHostedMediaUrl(playbackUrl)
@@ -4431,13 +4474,14 @@ ${urlToPlay}`)
       resolvedFromHost
         ? {
             ...item,
-            _resolvedFromHost: !resolvedIsDirectMedia,
+            _resolvedFromHost: true,
             referer: source?.meta?.referer || item?.referer || originalUrl,
             userAgent: source?.meta?.userAgent || item?.userAgent || "",
             headers: source?.meta?.headers || item?.headers,
             drm: source?.meta?.drmKeys ? { clearkey: source.meta.drmKeys } : item?.drm,
             embed: !!(source?.meta?.embed || item?.embed),
-            import: !!(source?.meta?.import || item?.import)
+            import: !!(source?.meta?.import || item?.import),
+            _resolvedIsDirectMedia: resolvedIsDirectMedia
           }
         : item
     )
@@ -4567,29 +4611,23 @@ function renderBrowser(){
 
       let meta=result.pathLabel || ""
       if(isVideo && item.import) meta = (meta ? meta + " · " : "") + "Importa otra lista"
-      else if(isVideo && isEmbedStation(item)) meta = (meta ? meta + " · " : "") + "Embed / captcha"
       else if(isVideo && isYoutubeUrl(item.url)) meta = (meta ? meta + " · " : "") + "YouTube"
 
       const card=document.createElement("div")
       card.className="card"+(isCurrentItem(item)?" active-item":"")
       card.innerHTML =
   cardImage(item.image || item.img || "", fallback) +
+  getItemImageBadgesHtml(
+    item,
+    result.stack,
+    getBrowserItemMenuHtml(item, { isVideo, editMode:isEditModeOn(), stack:result.stack })
+  ) +
   '<div class="card-body">'+
     (isCurrentItem(item)?'<div class="card-current-dot"></div>':'')+
     statusDot+
     '<div class="card-type">'+(isGroup ? 'Carpeta' : (stationContainer ? 'Carpeta' : 'Vídeo'))+'</div>'+
     '<div class="card-title">'+escapeHtml(item.name || item.title || "Sin título")+'</div>'+
     '<div class="card-meta">'+escapeHtml(meta)+'</div>'+
-    getItemPlaybackBadgesHtml(item, result.stack)+
-    getInfoQuickButtonHtml(item)+
-    (isEditModeOn()
-      ? '<details class="card-menu browser-item-menu">'+
-          '<summary class="menu-btn" type="button">⋮</summary>'+
-          '<div class="menu-pop">'+
-            '<button class="btn small edit-item" type="button">Editar</button>'+
-          '</div>'+
-        '</details>'
-      : '')+
   '</div>'
 
       card.addEventListener("click", async ()=>{
@@ -4622,6 +4660,21 @@ card.querySelector(".info-quick-btn")?.addEventListener("click",(e)=>{
   focusBrowserItemInfo(item, item?.name || item?.title || "Explorador")
 })
 
+card.querySelector(".toggle-seen")?.addEventListener("click",(e)=>{
+  e.stopPropagation()
+  const key=getContentKey(item, result.stack)
+  const nextSeen=!isItemSeen(key)
+  setItemSeen(key, nextSeen)
+  closeAllLibraryMenus()
+  renderBrowser()
+})
+card.querySelector(".clear-progress")?.addEventListener("click",(e)=>{
+  e.stopPropagation()
+  clearContentProgress(item, result.stack)
+  setItemSeen(item, false, result.stack)
+  closeAllLibraryMenus()
+  renderBrowser()
+})
 card.querySelector(".edit-item")?.addEventListener("click",(e)=>{
   e.stopPropagation()
   fillEditorFromItem(item, result.kind, getCurrentNode())
@@ -4661,7 +4714,7 @@ card.querySelector(".edit-item")?.addEventListener("click",(e)=>{
         counts.videos ? counts.videos+" vídeos" : ""
       ].filter(Boolean).join(" · ")
     }else{
-      meta=item.import ? "Importa otra lista" : (isEmbedStation(item) ? "Embed / captcha" : (isYoutubeUrl(item.url) ? "YouTube" : ""))
+      meta=item.import ? "Importa otra lista" : (isYoutubeUrl(item.url) ? "YouTube" : "")
     }
 
     const statusDot=isVideo && !item.import ? getLinkStatusDot(item.url) : ""
@@ -4670,6 +4723,11 @@ card.querySelector(".edit-item")?.addEventListener("click",(e)=>{
     card.className="card"+(isCurrentItem(item)?" active-item":"")
     card.innerHTML =
       cardImage(item.image || item.img || "", fallback) +
+      getItemImageBadgesHtml(
+        item,
+        getCurrentContentStack(),
+        getBrowserItemMenuHtml(item, { isVideo, editMode:isEditModeOn() })
+      ) +
       '<div class="card-body">'+
         (isCurrentItem(item)?'<div class="card-current-dot"></div>':'')+
         statusDot+
@@ -4678,11 +4736,7 @@ card.querySelector(".edit-item")?.addEventListener("click",(e)=>{
         '</div>'+
         '<div class="card-title">'+escapeHtml(item.name || item.title || "Sin título")+'</div>'+
         '<div class="card-meta">'+escapeHtml(meta)+'</div>'+
-        getItemPlaybackBadgesHtml(item)+
         (item.import?'<div class="card-badge">IMPORT</div>':'')+
-        (isEmbedStation(item)?'<div class="card-badge">EMBED</div>':'')+
-        getInfoQuickButtonHtml(item)+
-        (isEditModeOn() ? '<details class="card-menu browser-item-menu"><summary class="menu-btn" type="button">⋮</summary><div class="menu-pop">'+getMoveMenuButtonsHtml()+'<div class="menu-inline-group move-item-pop hidden"><button class="btn small move-left" type="button">Izquierda</button><button class="btn small move-right" type="button">Derecha</button></div>'+getServerMenuButtonsHtml(item)+'<button class="btn small edit-item" type="button">Editar</button></div></details>' : '')+
       '</div>'
 
     card.onclick=async ()=>{
@@ -4736,6 +4790,22 @@ card.querySelector(".edit-item")?.addEventListener("click",(e)=>{
     card.querySelector(".info-quick-btn")?.addEventListener("click",(e)=>{
       e.stopPropagation()
       focusBrowserItemInfo(item, item?.name || item?.title || "Explorador")
+    })
+
+    card.querySelector(".toggle-seen")?.addEventListener("click",(e)=>{
+      e.stopPropagation()
+      const key=getContentKey(item)
+      const nextSeen=!isItemSeen(key)
+      setItemSeen(key, nextSeen)
+      closeAllLibraryMenus()
+      renderBrowser()
+    })
+    card.querySelector(".clear-progress")?.addEventListener("click",(e)=>{
+      e.stopPropagation()
+      clearContentProgress(item)
+      setItemSeen(item, false)
+      closeAllLibraryMenus()
+      renderBrowser()
     })
 
     card.querySelector(".edit-item")?.addEventListener("click",(e)=>{
@@ -5068,10 +5138,25 @@ async function runPendingManualResolve(useTab=false){
     resolved
   )
 
+  const resolvedIsDirectMedia = isDirectMediaUrl(resolved)
+
   playUrl(
     resolved,
     pendingManualResolveTitle || "Reproduciendo",
-    pendingManualResolveItem
+    {
+      ...(pendingManualResolveItem || {}),
+      _resolvedFromHost: true,
+      referer:
+        pendingManualResolveReferer ||
+        pendingManualResolveItem?.referer ||
+        pendingManualResolveUrl ||
+        "",
+      userAgent: pendingManualResolveItem?.userAgent || "",
+      headers: pendingManualResolveItem?.headers,
+      embed: !!pendingManualResolveItem?.embed,
+      import: !!pendingManualResolveItem?.import,
+      _resolvedIsDirectMedia: resolvedIsDirectMedia
+    }
   )
 }
 

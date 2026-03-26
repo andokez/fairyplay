@@ -361,20 +361,24 @@ transition:opacity .18s ease, transform .18s ease
 .card.active-item{border-color:#2d5cff;box-shadow:0 0 0 1px rgba(45,92,255,.35) inset}
 .card-body{position:relative}
 .info-quick-btn{
-  position:absolute;
-  left:10px;
-  bottom:10px;
-  width:30px;
-  height:30px;
-  min-width:30px;
+  width:32px;
+  height:32px;
+  min-width:32px;
   padding:0;
   border-radius:999px;
   font-weight:700;
-  z-index:5;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  border:1px solid rgba(255,255,255,.28);
+  background:rgba(10,14,24,.88);
+  color:#fff;
+  backdrop-filter:blur(8px);
+  box-shadow:0 6px 18px rgba(0,0,0,.35);
 }
-.card-body .card-meta:last-of-type,
-.card-body .card-badge:last-of-type{
-  margin-bottom:34px;
+.info-quick-btn:hover{
+  background:rgba(25,35,58,.92);
+  border-color:rgba(150,190,255,.5);
 }
 .menu-inline-group{
   display:flex;
@@ -383,8 +387,22 @@ transition:opacity .18s ease, transform .18s ease
 }
 .card-current-dot{position:absolute;top:12px;right:12px;width:12px;height:12px;border-radius:50%;background:#2d5cff;box-shadow:0 0 0 3px rgba(45,92,255,.18)}
 
-
-.menu-btn{list-style:none;cursor:pointer;border:1px solid #3a3a3a;background:#232323;color:#fff;padding:6px 10px;border-radius:8px;line-height:1}
+.menu-btn{
+  list-style:none;
+  cursor:pointer;
+  border:1px solid rgba(255,255,255,.28);
+  background:rgba(10,14,24,.88);
+  color:#fff;
+  padding:6px 10px;
+  border-radius:999px;
+  line-height:1;
+  backdrop-filter:blur(8px);
+  box-shadow:0 6px 18px rgba(0,0,0,.35);
+}
+.menu-btn:hover{
+  background:rgba(25,35,58,.92);
+  border-color:rgba(150,190,255,.5);
+}
 .card-menu{position:relative}
 .card-menu summary::-webkit-details-marker{display:none}
 .menu-pop{position:absolute;right:0;top:34px;display:flex;flex-direction:column;gap:6px;padding:8px;background:#111;border:1px solid #333;border-radius:10px;min-width:120px;z-index:20}
@@ -446,14 +464,23 @@ transition:opacity .18s ease, transform .18s ease
   display:none!important;
 }
 .browser-item-menu{
-  position:absolute;
-  right:10px;
-  bottom:10px;
+  position:relative;
   z-index:40;
+  flex:0 0 auto;
+}
+.browser-item-menu .menu-btn{
+  width:32px;
+  height:32px;
+  min-width:32px;
+  padding:0;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  font-size:18px;
 }
 .browser-item-menu .menu-pop{
   top:auto;
-  bottom:34px;
+  bottom:40px;
   right:0;
   min-width:170px;
   max-width:min(320px, calc(100vw - 40px));
@@ -701,4 +728,78 @@ transition:opacity .18s ease, transform .18s ease
   gap:10px;
   flex-wrap:wrap;
   margin-top:12px;
+}
+
+
+.card{
+  overflow:visible;
+}
+.card-image{
+  position:relative;
+}
+.card-image-overlays{
+  position:absolute;
+  left:10px;
+  right:10px;
+  bottom:10px;
+  display:flex;
+  justify-content:space-between;
+  align-items:flex-end;
+  gap:8px;
+  pointer-events:none;
+  z-index:6;
+}
+.card-image-overlays-left,
+.card-image-overlays-right{
+  display:flex;
+  align-items:flex-end;
+  gap:8px;
+  pointer-events:auto;
+}
+.card-overlay-badge{
+  display:inline-flex;
+  align-items:center;
+  min-height:28px;
+  padding:6px 10px;
+  border-radius:999px;
+  border:1px solid rgba(255,255,255,.16);
+  background:rgba(12,18,32,.82);
+  backdrop-filter:blur(6px);
+  box-shadow:0 6px 18px rgba(0,0,0,.35);
+  font-size:12px;
+  font-weight:700;
+  line-height:1;
+  color:#dbe7ff;
+  text-shadow:0 1px 0 rgba(0,0,0,.35);
+}
+.card-overlay-badge-progress{
+  background:rgba(31,70,160,.92);
+  border-color:rgba(120,170,255,.6);
+  color:#eff6ff;
+}
+.card-overlay-badge-seen{
+  background:rgba(24,115,61,.92);
+  border-color:rgba(132,234,173,.45);
+  color:#ecfff2;
+}
+.card-overlay-badge-embed{
+  background:rgba(20,20,20,.88);
+  border-color:rgba(255,255,255,.2);
+  color:#fff;
+}
+.card-image{
+  position:relative;
+}
+
+.card-time-overlay{
+  position:absolute;
+  left:8px;
+  bottom:8px;
+  background:rgba(0,0,0,.7);
+  padding:4px 8px;
+  border-radius:8px;
+  font-size:12px;
+  color:#2d5cff;
+  font-weight:bold;
+  z-index:5;
 }
