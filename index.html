@@ -136,44 +136,7 @@
       <button id="addUrlFieldBtn" class="btn small" type="button">+ Añadir URL</button>
     </div>
 
-    <div id="entryUrlFields">
-      <div class="row url-entry-row">
-        <input id="entryUrlInput" class="input grow entry-url-input" type="text" placeholder=".mp4 / .m3u8 / .mpd / URL de lista" />
-        <button class="btn small remove-url-field hidden" type="button">✕</button>
-      </div>
-    </div>
-
-    <label class="label">Referer</label>
-    <input id="entryRefererInput" class="input" type="text" placeholder="https://host.com" />
-
-    <label class="label">User-Agent (opcional)</label>
-    <input id="entryUserAgentInput" class="input" type="text" placeholder="Mozilla/5.0 ..." />
-
-    <details class="editor-fold">
-      <summary class="editor-fold-summary">Headers extra (opcional)</summary>
-      <div class="editor-fold-body">
-        <textarea id="entryHeadersInput" class="input textarea" rows="5" placeholder="web-token: eyJ...&#10;origin: https://www.web.com&#10;x-algo: valor"></textarea>
-        <p class="hint">Una línea por header, en formato <b>nombre:valor</b>. Ejemplo: <b>web-token: TU_TOKEN</b></p>
-      </div>
-    </details>
-
-    <details class="editor-fold">
-      <summary class="editor-fold-summary">DRM ClearKey (opcional)</summary>
-      <div class="editor-fold-body">
-        <textarea id="entryDrmKeysInput" class="input textarea" rows="4" placeholder="kid1:key1&#10;kid2:key2&#10;kid3:key3"></textarea>
-        <p class="hint">Una línea por clave, en formato <b>kid:key</b></p>
-      </div>
-    </details>
-
-    <label class="check">
-      <input id="entryImportToggle" type="checkbox" />
-      <span>Import = es una lista JSON</span>
-    </label>
-
-    <label class="check">
-      <input id="entryEmbedToggle" type="checkbox" />
-      <span>Embed = necesita resolución manual</span>
-    </label>
+    <div id="entryUrlFields"></div>
   </div>
 
   <div class="row">
@@ -264,9 +227,13 @@
         <pre id="debug" class="debug hidden"></pre>
 
         <div id="manualResolveBox" class="manual-resolve hidden">
-          <div class="hint">Este host necesita intervención manual para captcha / continue.</div>
-          <button id="manualResolveBtn" class="btn primary">Resolver captcha en ventana</button>
-        </div>
+  <div class="hint">Este host necesita intervención manual para captcha / continue.</div>
+  <div class="manual-resolve-actions">
+    <button id="manualResolveBtn" class="btn primary">Resolver captcha en ventana</button>
+    <button id="manualResolveTabBtn" class="btn" type="button">Resolver captcha en pestaña nueva</button>
+  </div>
+  <div class="hint">En modo pestaña, puede que tengas que cerrarla manualmente cuando ya arranque el vídeo.</div>
+</div>
       </section>
 
 <section class="browser panel">

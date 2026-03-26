@@ -35,12 +35,6 @@ const entryInfoInput=$("entryInfoInput")
 const entryUrlFields=$("entryUrlFields")
 const entryUrlInput=$("entryUrlInput")
 const addUrlFieldBtn=$("addUrlFieldBtn")
-const entryRefererInput=$("entryRefererInput")
-const entryUserAgentInput=$("entryUserAgentInput")
-const entryHeadersInput=$("entryHeadersInput")
-const entryDrmKeysInput=$("entryDrmKeysInput")
-const entryImportToggle=$("entryImportToggle")
-const entryEmbedToggle=$("entryEmbedToggle")
 const addEntryBtn=$("addEntryBtn")
 const libraryList=$("libraryList")
 const autoplayToggle=$("autoplayToggle")
@@ -85,6 +79,7 @@ const debugToggleBtn=$("debugToggleBtn")
 const debugEl=$("debug")
 const manualResolveBox=$("manualResolveBox")
 const manualResolveBtn=$("manualResolveBtn")
+const manualResolveTabBtn=$("manualResolveTabBtn")
 const youtubeFrame=$("youtubeFrame")
 const browserGrid=$("browserGrid")
 const breadcrumbs=$("breadcrumbs")
@@ -997,24 +992,249 @@ function makeItemKey(item){
 }
 function isCurrentItem(item){ return !!currentItemKey && makeItemKey(item)===currentItemKey }
 
+function createEmptySourceOptions(){
+  return {
+    referer:"",
+    userAgent:"",
+    headersText:"",
+    drmText:"",
+    import:false,
+    embed:false
+  }
+}
+
+function normalizeSourceOptions(source={}){
+  return {
+    ...createEmptySourceOptions(),
+    ...(source && typeof source==="object" ? source : {})
+  }
+}
+
+function sourceOptionsToMeta(source={}){
+  const normalized=normalizeSourceOptions(source)
+  return {
+    referer:String(normalized.referer||"").trim(),
+    userAgent:String(normalized.userAgent||"").trim(),
+    headers:parseHeadersText(normalized.headersText||""),
+    drmKeys:parseDrmKeysText(normalized.drmText||""),
+    import:!!normalized.import,
+    embed:!!normalized.embed
+  }
+}
+
+function getPerUrlFieldName(sourceKey, field){
+  if(sourceKey==="url") return field
+  return `${sourceKey}${field.charAt(0).toUpperCase()}${field.slice(1)}`
+}
+
+function getLegacySourceMeta(item, sourceKey){
+  const sourceOptions=(item?.sourceOptions && typeof item.sourceOptions==="object") ? item.sourceOptions : {}
+  const rawSource=(sourceOptions?.[sourceKey] && typeof sourceOptions[sourceKey]==="object") ? sourceOptions[sourceKey] : {}
+
+  const drmFromLegacy=rawSource.drm && typeof rawSource.drm==="object"
+    ? rawSource.drm
+    : item?.drm
+
+  return {
+    referer:rawSource.referer ?? (sourceKey==="url" ? item?.referer : ""),
+    userAgent:rawSource.userAgent ?? (sourceKey==="url" ? (item?.userAgent ?? item?.headers?.["user-agent"] ?? item?.headers?.["User-Agent"]) : ""),
+    headers:rawSource.headers && typeof rawSource.headers==="object"
+      ? rawSource.headers
+      : (sourceKey==="url" ? item?.headers : null),
+    drm:drmFromLegacy && typeof drmFromLegacy==="object" ? drmFromLegacy : null,
+    import:rawSource.import ?? (sourceKey==="url" ? !!item?.import : false),
+    embed:rawSource.embed ?? (sourceKey==="url" ? isEmbedStation(item) : false)
+  }
+}
+
+function readSourceMetaFromItem(item, sourceKey){
+  const legacy=getLegacySourceMeta(item, sourceKey)
+
+  const refererField=getPerUrlFieldName(sourceKey, "referer")
+  const userAgentField=getPerUrlFieldName(sourceKey, "userAgent")
+  const headersField=getPerUrlFieldName(sourceKey, "headers")
+  const drmField=getPerUrlFieldName(sourceKey, "drm")
+  const importField=getPerUrlFieldName(sourceKey, "import")
+  const embedField=getPerUrlFieldName(sourceKey, "embed")
+  const kidField=getPerUrlFieldName(sourceKey, "kid")
+  const keyField=getPerUrlFieldName(sourceKey, "key")
+
+  const headers=item?.[headersField] && typeof item[headersField]==="object"
+    ? item[headersField]
+    : legacy.headers
+
+  let drm=item?.[drmField] && typeof item[drmField]==="object"
+    ? item[drmField]
+    : legacy.drm
+
+  const flatKid=normalizeDrmHex(item?.[kidField] || "")
+  const flatKey=normalizeDrmHex(item?.[keyField] || "")
+
+  if((!drm || typeof drm!=="object") && flatKid && flatKey){
+    drm={ clearkey:{ [flatKid]: flatKey } }
+  }
+
+  const source=normalizeSourceOptions({
+    referer:String(item?.[refererField] ?? legacy.referer ?? "").trim(),
+    userAgent:String(item?.[userAgentField] ?? legacy.userAgent ?? "").trim(),
+    headersText:headersToText({ headers }),
+    drmText:drmKeysToText(drm ? { drm } : {}),
+    import:item?.[importField] === true ? true : !!legacy.import,
+    embed:item?.[embedField] === true ? true : !!legacy.embed
+  })
+
+  return {
+    ...source,
+    meta:sourceOptionsToMeta(source)
+  }
+}
+
+function clearSourceMetaFields(item, sourceKey){
+  if(!item || typeof item!=="object") return
+
+  const refererField=getPerUrlFieldName(sourceKey, "referer")
+  const userAgentField=getPerUrlFieldName(sourceKey, "userAgent")
+  const headersField=getPerUrlFieldName(sourceKey, "headers")
+  const drmField=getPerUrlFieldName(sourceKey, "drm")
+  const importField=getPerUrlFieldName(sourceKey, "import")
+  const embedField=getPerUrlFieldName(sourceKey, "embed")
+  const kidField=getPerUrlFieldName(sourceKey, "kid")
+  const keyField=getPerUrlFieldName(sourceKey, "key")
+
+  delete item[refererField]
+  delete item[userAgentField]
+  delete item[headersField]
+  delete item[drmField]
+  delete item[importField]
+  delete item[embedField]
+  delete item[kidField]
+  delete item[keyField]
+}
+
+function applySourceMetaToItem(item, sourceKey, source={}){
+  if(!item || typeof item!=="object") return
+
+  clearSourceMetaFields(item, sourceKey)
+
+  const meta=sourceOptionsToMeta(source)
+
+  const refererField=getPerUrlFieldName(sourceKey, "referer")
+  const userAgentField=getPerUrlFieldName(sourceKey, "userAgent")
+  const headersField=getPerUrlFieldName(sourceKey, "headers")
+  const drmField=getPerUrlFieldName(sourceKey, "drm")
+  const importField=getPerUrlFieldName(sourceKey, "import")
+  const embedField=getPerUrlFieldName(sourceKey, "embed")
+  const kidField=getPerUrlFieldName(sourceKey, "kid")
+  const keyField=getPerUrlFieldName(sourceKey, "key")
+
+  if(meta.referer) item[refererField]=meta.referer
+  if(meta.userAgent) item[userAgentField]=meta.userAgent
+  if(meta.import) item[importField]=true
+  if(meta.embed) item[embedField]=true
+
+  const cleanHeaders={ ...(meta.headers || {}) }
+  if(Object.keys(cleanHeaders).length){
+    item[headersField]=cleanHeaders
+  }
+
+  if(meta.drmKeys){
+    item[drmField]={ clearkey:meta.drmKeys }
+
+    const drmEntries=Object.entries(meta.drmKeys)
+    if(drmEntries.length===1){
+      item[kidField]=drmEntries[0][0]
+      item[keyField]=drmEntries[0][1]
+    }
+  }
+}
+
+function clearAllUrlMetaFields(item){
+  if(!item || typeof item!=="object") return
+
+  clearSourceMetaFields(item, "url")
+
+  Object.keys(item).forEach(key=>{
+    if(/^url\d+$/i.test(key)){
+      clearSourceMetaFields(item, key)
+    }
+  })
+
+  delete item.sourceOptions
+}
+
+function getSourceRefererForCache(entry){
+  return sourceOptionsToMeta(entry?.source || {}).referer || ""
+}
+
+function getRowSourceOptions(row){
+  return normalizeSourceOptions(row?._sourceOptions)
+}
+
+function setRowSourceOptions(row, source={}){
+  if(!row) return
+  row._sourceOptions=normalizeSourceOptions(source)
+
+  const refererInput=row.querySelector(".entry-source-referer")
+  const userAgentInput=row.querySelector(".entry-source-user-agent")
+  const headersInput=row.querySelector(".entry-source-headers")
+  const drmInput=row.querySelector(".entry-source-drm")
+  const importToggle=row.querySelector(".entry-source-import")
+  const embedToggle=row.querySelector(".entry-source-embed")
+
+  if(refererInput) refererInput.value=row._sourceOptions.referer
+  if(userAgentInput) userAgentInput.value=row._sourceOptions.userAgent
+  if(headersInput) headersInput.value=row._sourceOptions.headersText
+  if(drmInput) drmInput.value=row._sourceOptions.drmText
+  if(importToggle) importToggle.checked=!!row._sourceOptions.import
+  if(embedToggle) embedToggle.checked=!!row._sourceOptions.embed
+}
+
+function readRowSourceOptions(row){
+  if(!row) return createEmptySourceOptions()
+  const source={
+    referer:row.querySelector(".entry-source-referer")?.value?.trim() || "",
+    userAgent:row.querySelector(".entry-source-user-agent")?.value?.trim() || "",
+    headersText:row.querySelector(".entry-source-headers")?.value || "",
+    drmText:row.querySelector(".entry-source-drm")?.value || "",
+    import:!!row.querySelector(".entry-source-import")?.checked,
+    embed:!!row.querySelector(".entry-source-embed")?.checked
+  }
+  row._sourceOptions=normalizeSourceOptions(source)
+  return row._sourceOptions
+}
+
 function normalizeUrlFieldsFromCombinedInput(preferLastEmpty=false){
   if(!entryUrlFields) return
 
-  const inputs=getEditorUrlInputs()
-  const allUrls=inputs.flatMap(input => splitEditorUrlText(input.value))
+  const rows=getEditorUrlRows()
+  const allEntries=[]
+  let hadTrailingEmpty=false
 
-  const hadTrailingEmpty=inputs.some(input => !String(input.value||"").trim())
+  rows.forEach(row=>{
+    const input=row.querySelector(".entry-url-input")
+    const parts=splitEditorUrlText(input?.value || "")
+    const sourceOptions=readRowSourceOptions(row)
+
+    if(!parts.length){
+      hadTrailingEmpty=true
+      return
+    }
+
+    parts.forEach(url=>{
+      allEntries.push({ url, source: { ...sourceOptions } })
+    })
+  })
 
   entryUrlFields.innerHTML=""
 
-  if(!allUrls.length){
+  if(!allEntries.length){
     entryUrlFields.appendChild(createUrlFieldRow(""))
     syncUrlFieldButtons()
     return
   }
 
-  allUrls.forEach(url=>{
-    entryUrlFields.appendChild(createUrlFieldRow(url))
+  allEntries.forEach(entry=>{
+    entryUrlFields.appendChild(createUrlFieldRow(entry.url, entry.source))
   })
 
   if(preferLastEmpty || hadTrailingEmpty){
@@ -1024,15 +1244,58 @@ function normalizeUrlFieldsFromCombinedInput(preferLastEmpty=false){
   syncUrlFieldButtons()
 }
 
-function createUrlFieldRow(value=""){
+function createUrlFieldRow(value="", sourceOptions={}){
   const row=document.createElement("div")
-  row.className="row url-entry-row"
-  row.innerHTML=`<input class="input grow entry-url-input" type="text" placeholder=".mp4 / .m3u8 / .mpd / URL de lista" value="${escapeHtml(value)}" />
-<button class="btn small move-url-up" type="button" title="Subir URL">↑</button>
-<button class="btn small move-url-down" type="button" title="Bajar URL">↓</button>
-<button class="btn small remove-url-field" type="button">✕</button>`
+  row.className="url-entry-card"
+  row.innerHTML=`<div class="row url-entry-row">
+  <input class="input grow entry-url-input" type="text" placeholder=".mp4 / .m3u8 / .mpd / URL de lista" value="${escapeHtml(value)}" />
+  <details class="card-menu url-entry-menu">
+    <summary class="menu-btn icon-btn url-entry-menu-btn" type="button" title="Opciones URL">⋯</summary>
+    <div class="menu-pop menu-pop-right">
+      <button class="btn small move-url-up" type="button">Subir</button>
+      <button class="btn small move-url-down" type="button">Bajar</button>
+      <button class="btn small toggle-url-advanced" type="button">Más opciones</button>
+      <button class="btn small remove-url-field" type="button">Borrar</button>
+    </div>
+  </details>
+</div>
+<div class="url-source-advanced hidden">
+  <label class="label">Referer</label>
+  <input class="input entry-source-referer" type="text" placeholder="https://host.com" />
+
+  <label class="label">User-Agent (opcional)</label>
+  <input class="input entry-source-user-agent" type="text" placeholder="Mozilla/5.0 ..." />
+
+  <details class="editor-fold">
+    <summary class="editor-fold-summary">Headers extra (opcional)</summary>
+    <div class="editor-fold-body">
+      <textarea class="input textarea entry-source-headers" rows="5" placeholder="web-token: eyJ...&#10;origin: https://www.web.com&#10;x-algo: valor"></textarea>
+      <p class="hint">Una línea por header, en formato <b>nombre:valor</b>. Ejemplo: <b>web-token: TU_TOKEN</b></p>
+    </div>
+  </details>
+
+  <details class="editor-fold">
+    <summary class="editor-fold-summary">DRM ClearKey (opcional)</summary>
+    <div class="editor-fold-body">
+      <textarea class="input textarea entry-source-drm" rows="4" placeholder="kid1:key1&#10;kid2:key2&#10;kid3:key3"></textarea>
+      <p class="hint">Una línea por clave, en formato <b>kid:key</b></p>
+    </div>
+  </details>
+
+  <label class="check">
+    <input class="entry-source-import" type="checkbox" />
+    <span>Import = es una lista JSON</span>
+  </label>
+
+  <label class="check">
+    <input class="entry-source-embed" type="checkbox" />
+    <span>Embed = necesita resolución manual</span>
+  </label>
+</div>`
 
   const input=row.querySelector(".entry-url-input")
+  const menu=row.querySelector(".url-entry-menu")
+  const advancedBox=row.querySelector(".url-source-advanced")
 
   input?.addEventListener("blur", ()=>{
     const parts=splitEditorUrlText(input.value)
@@ -1044,17 +1307,27 @@ function createUrlFieldRow(value=""){
   row.querySelector(".move-url-up")?.addEventListener("click", ()=>{
     const prev=row.previousElementSibling
     if(prev){
+      readRowSourceOptions(row)
       row.parentNode.insertBefore(row, prev)
       syncUrlFieldButtons()
     }
+    menu?.removeAttribute("open")
   })
 
   row.querySelector(".move-url-down")?.addEventListener("click", ()=>{
     const next=row.nextElementSibling
     if(next){
+      readRowSourceOptions(row)
       row.parentNode.insertBefore(next, row)
       syncUrlFieldButtons()
     }
+    menu?.removeAttribute("open")
+  })
+
+  row.querySelector(".toggle-url-advanced")?.addEventListener("click", ()=>{
+    readRowSourceOptions(row)
+    advancedBox?.classList.toggle("hidden")
+    menu?.removeAttribute("open")
   })
 
   row.querySelector(".remove-url-field")?.addEventListener("click", ()=>{
@@ -1063,11 +1336,16 @@ function createUrlFieldRow(value=""){
     syncUrlFieldButtons()
   })
 
+  setRowSourceOptions(row, sourceOptions)
   return row
 }
 
+function getEditorUrlRows(){
+  return Array.from(entryUrlFields?.querySelectorAll(".url-entry-card") || [])
+}
+
 function getEditorUrlInputs(){
-  return Array.from(entryUrlFields?.querySelectorAll(".entry-url-input") || [])
+  return getEditorUrlRows().map(row=>row.querySelector(".entry-url-input")).filter(Boolean)
 }
 
 function splitEditorUrlText(value=""){
@@ -1077,10 +1355,23 @@ function splitEditorUrlText(value=""){
     .filter(Boolean)
 }
 
+function getVideoSourceEntriesFromEditor(){
+  const entries=[]
+
+  getEditorUrlRows().forEach(row=>{
+    const urls=splitEditorUrlText(row.querySelector(".entry-url-input")?.value || "")
+    const source=readRowSourceOptions(row)
+
+    urls.forEach(url=>{
+      entries.push({ url, source:{ ...source } })
+    })
+  })
+
+  return entries
+}
+
 function getVideoUrlsFromEditor(){
-  return getEditorUrlInputs()
-    .flatMap(input => splitEditorUrlText(input.value))
-    .filter(Boolean)
+  return getVideoSourceEntriesFromEditor().map(entry=>entry.url).filter(Boolean)
 }
 
 function ensureAtLeastOneUrlField(){
@@ -1092,7 +1383,7 @@ function ensureAtLeastOneUrlField(){
 }
 
 function syncUrlFieldButtons(){
-  const rows=Array.from(entryUrlFields?.querySelectorAll(".url-entry-row") || [])
+  const rows=getEditorUrlRows()
   const canRemove=rows.length>1
 
   rows.forEach((row, index)=>{
@@ -1102,65 +1393,75 @@ function syncUrlFieldButtons(){
   })
 }
 
-function setVideoUrlsInEditor(urls=[]){
+function setVideoUrlsInEditor(entries=[]){
   if(!entryUrlFields) return
 
-  const values=(Array.isArray(urls) ? urls : [])
-    .map(v => String(v||"").trim())
-    .filter(Boolean)
+  const values=(Array.isArray(entries) ? entries : [])
+    .map(entry=>{
+      if(typeof entry==="string") return { url:String(entry||"").trim(), source:createEmptySourceOptions() }
+      return {
+        url:String(entry?.url||"").trim(),
+        source:normalizeSourceOptions(entry?.source)
+      }
+    })
+    .filter(entry=>entry.url)
 
   entryUrlFields.innerHTML=""
 
-  const finalValues=values.length ? values : [""]
+  const finalValues=values.length ? values : [{ url:"", source:createEmptySourceOptions() }]
 
-  finalValues.forEach(value=>{
-    entryUrlFields.appendChild(createUrlFieldRow(value))
+  finalValues.forEach(entry=>{
+    entryUrlFields.appendChild(createUrlFieldRow(entry.url, entry.source))
   })
 
   syncUrlFieldButtons()
 }
 
-function appendVideoUrlField(value=""){
+function appendVideoUrlField(value="", sourceOptions={}){
   if(!entryUrlFields) return
   normalizeUrlFieldsFromCombinedInput(false)
-  entryUrlFields.appendChild(createUrlFieldRow(value))
+  entryUrlFields.appendChild(createUrlFieldRow(value, sourceOptions))
   syncUrlFieldButtons()
 }
 
 function getItemSourceEntries(item){
   const entries=[]
-  const baseUrl=String(item?.url||"").trim()
 
-  if(baseUrl){
+  const pushEntry=(key, index, order, url)=>{
+    const cleanUrl=String(url||"").trim()
+    if(!cleanUrl) return
+
+    const sourceInfo=readSourceMetaFromItem(item, key)
+
     entries.push({
-      key:"url",
-      index:0,
-      order:1,
-      label:"Servidor 1",
-      url:baseUrl
+      key,
+      index,
+      order,
+      label:`Servidor ${order}`,
+      url:cleanUrl,
+      referer:sourceInfo.referer,
+      userAgent:sourceInfo.userAgent,
+      headersText:sourceInfo.headersText,
+      drmText:sourceInfo.drmText,
+      import:sourceInfo.import,
+      embed:sourceInfo.embed,
+      meta:sourceInfo.meta
     })
   }
+
+  pushEntry("url", 0, 1, item?.url)
 
   Object.keys(item||{})
     .map(key=>{
       const m=String(key).match(/^url(\d+)$/i)
       if(!m) return null
-
       const num=Number(m[1]||0)
-      const value=String(item?.[key]||"").trim()
-      if(!num || !value) return null
-
-      return {
-        key,
-        index:num-1,
-        order:num,
-        label:`Servidor ${num}`,
-        url:value
-      }
+      if(!num) return null
+      return { key, num, value:item?.[key] }
     })
     .filter(Boolean)
-    .sort((a,b)=>a.order-b.order)
-    .forEach(entry=>entries.push(entry))
+    .sort((a,b)=>a.num-b.num)
+    .forEach(entry=>pushEntry(entry.key, entry.num-1, entry.num, entry.value))
 
   return entries
 }
@@ -1186,6 +1487,29 @@ function getServerMenuButtonsHtml(item){
   return entries.map(entry =>
     `<button class="btn small choose-server" data-server-index="${entry.index}" type="button">${escapeHtml(entry.label)}</button>`
   ).join("")
+}
+
+function getMoveMenuButtonsHtml(){
+  return `<button class="btn small move-item" type="button">Mover</button>`
+}
+
+function getInfoQuickButtonHtml(item){
+  const infoText=findNearestInfoForItem(item)
+  if(!formatInfoText(infoText)) return ""
+  return '<button class="btn info-quick-btn" type="button" title="Mostrar información">i</button>'
+}
+
+function focusBrowserItemInfo(item, titleOverride=""){
+  if(!item) return
+
+  const infoText=findNearestInfoForItem(item)
+  if(!formatInfoText(infoText)) return
+
+  currentItemKey=makeItemKey(item)
+  nowPlayingEl.textContent=titleOverride || item?.name || item?.title || "Explorador"
+  currentInfoExpanded=true
+  setCurrentInfo(infoText)
+  renderBrowser()
 }
 
 function startOpenRequest(){
@@ -1502,11 +1826,40 @@ ${cached.url}`)
   setDebug('⚠ No se pudo resolver a una URL directa de vídeo')
   return null
 }
-async function resolveStreamUrlManual(originalUrl, referer="") {
+async function resolveStreamUrlManual(originalUrl, referer="", useTab=false) {
   if (!needsResolution(originalUrl)) return originalUrl
-  if (!RESOLVER_CONFIG.backendUrl) { setDebug("La resolución manual necesita backend configurado."); return null }
-  setDebug("Abriendo ventana manual para captcha / continue...\nHaz el captcha, pulsa Proceed to video y espera a que se cierre sola.")
-  return await backendResolver(originalUrl, true, referer)
+  if (!RESOLVER_CONFIG.backendUrl) {
+    setDebug("La resolución manual necesita backend configurado.")
+    return null
+  }
+
+  const backendUrl=normalizeBackendUrl(RESOLVER_CONFIG.backendUrl)
+  const refererPart = referer ? `&referer=${encodeURIComponent(referer)}` : ``
+  const tabPart = useTab ? `&tab=1` : ``
+  const fullUrl = `${backendUrl}?url=${encodeURIComponent(originalUrl)}&manual=1${tabPart}${refererPart}`
+
+  setDebug(
+    useTab
+      ? "Abriendo captcha en pestaña nueva controlada por el backend...\nHaz el captcha, espera a que cargue el vídeo y luego FairyPlay cogerá la URL."
+      : "Abriendo ventana manual para captcha / continue...\nHaz el captcha, pulsa Proceed to video y espera a que se cierre sola."
+  )
+
+  try {
+    const response = await fetch(fullUrl)
+    const data = await response.json()
+
+    if (data.success && data.streamUrl) {
+      hideManualResolve()
+      setDebug(`Backend OK (${data.method || 'backend'}):\n${data.streamUrl}`)
+      return data.streamUrl
+    }
+
+    setDebug(`Backend respondió sin stream.\nMétodo: ${data.method || 'desconocido'}\nError: ${data.error || 'error desconocido'}\nURL analizada: ${originalUrl}`)
+    return null
+  } catch (e) {
+    setDebug(`Error conectando con backend:\n${e.message}`)
+    return null
+  }
 }
 
 function getProxyHeadersFromItem(item, options={}){
@@ -2176,22 +2529,17 @@ if(shouldForceProxyForResolvedHostFile && proxiedFileUrl){
           })
 
           hlsPlayer.on(Hls.Events.MANIFEST_PARSED, ()=>{
-            updateSubtitleButton()
-            video.play().catch(()=>{})
-          })
+  updateSubtitleButton()
+  video.play().catch(()=>{})
+})
 
-          hlsPlayer.on(Hls.Events.LEVEL_LOADED, ()=>{
-            updateSubtitleButton()
-            video.play().catch(()=>{})
-          })
+hlsPlayer.on(Hls.Events.SUBTITLE_TRACKS_UPDATED, ()=>{
+  updateSubtitleButton()
+})
 
-          hlsPlayer.on(Hls.Events.SUBTITLE_TRACKS_UPDATED, ()=>{
-            updateSubtitleButton()
-          })
-
-          hlsPlayer.on(Hls.Events.SUBTITLE_TRACK_SWITCH, ()=>{
-            updateSubtitleButton()
-          })
+hlsPlayer.on(Hls.Events.SUBTITLE_TRACK_SWITCH, ()=>{
+  updateSubtitleButton()
+})
 
           hlsPlayer.on(Hls.Events.ERROR, (_event, data)=>{
   if(data?.fatal){
@@ -2802,6 +3150,25 @@ function parseM3uText(text, sourceUrl=""){
 
 function normalizeImportedStationItem(it){
   const item=it && typeof it==="object" ? it : {}
+
+  const hasNestedStations=Array.isArray(item.stations)
+  const hasUrl=!!(item.url || item.link || item.file || item.src)
+
+  if(hasNestedStations && !hasUrl){
+    const out={
+      name:item.title||item.name||"Sin título",
+      image:item.image||item.img||item.logo||item.poster||""
+    }
+
+    if(item.info || item.description) out.info=item.info||item.description
+
+    out.stations=item.stations
+      .filter(entry => entry && typeof entry==="object")
+      .map(entry => normalizeImportedStationItem(entry))
+
+    return out
+  }
+
   const out={
     name:item.title||item.name||"Sin título",
     image:item.image||item.img||item.logo||item.poster||"",
@@ -2813,10 +3180,29 @@ function normalizeImportedStationItem(it){
   if(item.embed!=null) out.embed=isEmbedStation(item)
   if(item.referer || item.referrer) out.referer=item.referer||item.referrer
   if(item.userAgent || item["user-agent"]) out.userAgent=item.userAgent||item["user-agent"]
-  if(item.headers && typeof item.headers==="object") out.headers={...item.headers}
+  if(item.headers && typeof item.headers==="object") out.headers=structuredClone(item.headers)
   if(item.drm && typeof item.drm==="object") out.drm=structuredClone(item.drm)
+  if(item.sourceOptions && typeof item.sourceOptions==="object") out.sourceOptions=structuredClone(item.sourceOptions)
   if(item.kid) out.kid=item.kid
   if(item.key) out.key=item.key
+
+  Object.keys(item).forEach(key=>{
+    if(/^url\d+$/i.test(key) && item[key]){
+      out[key]=item[key]
+    }
+  })
+
+  Object.keys(item).forEach(key=>{
+    if(
+      /^url\d+(Referer|UserAgent|Headers|Drm|Import|Embed|Kid|Key)$/i.test(key) &&
+      item[key] != null &&
+      item[key] !== "" &&
+      item[key] !== false
+    ){
+      out[key]=structuredClone(item[key])
+    }
+  })
+
   return out
 }
 
@@ -3306,30 +3692,18 @@ function fillEditorFromItem(item, kind, parentNode){
     entryImageInput.value=item?.image||item?.img||""
     entryInfoInput.value=item?.info||""
     setVideoUrlsInEditor([])
-    entryRefererInput.value=""
-    entryImportToggle.checked=false
-    entryEmbedToggle.checked=false
   }else if(realKind==="station"){
     setEntryType("station")
     entryNameInput.value=item?.name||item?.title||""
     entryImageInput.value=item?.image||item?.img||""
     entryInfoInput.value=item?.info||""
     setVideoUrlsInEditor([])
-    entryRefererInput.value=""
-    entryImportToggle.checked=false
-    entryEmbedToggle.checked=false
   }else{
     setEntryType("video")
     entryNameInput.value=item?.name||item?.title||""
     entryImageInput.value=item?.image||item?.img||""
     entryInfoInput.value=item?.info||""
-    setVideoUrlsInEditor(getItemSourceEntries(item).map(x=>x.url))
-    entryRefererInput.value=item?.referer||""
-    entryUserAgentInput.value=item?.userAgent||item?.headers?.["user-agent"]||item?.headers?.["User-Agent"]||""
-    entryHeadersInput.value=headersToText(item)
-    entryDrmKeysInput.value=drmKeysToText(item)
-    entryImportToggle.checked=!!item?.import
-    entryEmbedToggle.checked=isEmbedStation(item)
+    setVideoUrlsInEditor(getItemSourceEntries(item).map(x=>({ url:x.url, source:x })))
   }
 
   addEntryBtn.textContent="Guardar cambios"
@@ -3346,12 +3720,6 @@ function clearEditorForm(){
   entryImageInput.value=""
   entryInfoInput.value=""
   setVideoUrlsInEditor([])
-  entryRefererInput.value=""
-  entryUserAgentInput.value=""
-  entryHeadersInput.value=""
-  entryDrmKeysInput.value=""
-  entryImportToggle.checked=false
-  entryEmbedToggle.checked=false
   addEntryBtn.textContent="Añadir aquí"
   updateEditorActionButtons()
 }
@@ -3710,7 +4078,6 @@ function renderBreadcrumbs(){
   })
 }
 async function openStation(item, options={}) {
-  if (item.import) { await importFromUrl(item.url); return }
 
   const sourceEntries = orderItemSourceEntries(
     getItemSourceEntries(item),
@@ -3752,7 +4119,7 @@ async function openStation(item, options={}) {
 
     triedLabels.push(source.label)
     lastManualResolveUrl=originalUrl
-    lastManualResolveReferer=item?.referer || ""
+    lastManualResolveReferer=source?.meta?.referer || item?.referer || ""
 
     setDebug(`URL recibida al pinchar:\n${originalUrl}\n\nProbando ${source.label}...`)
 
@@ -3801,13 +4168,13 @@ async function openStation(item, options={}) {
       return
     }
 
-if (isEmbedStation(item)) {
+if (source?.meta?.embed || isEmbedStation(item)) {
   if(!isOpenRequestCurrent(requestId)) return
 
   showManualResolve(
     originalUrl,
     item?.name || item?.title || "",
-    item?.referer || "",
+    source?.meta?.referer || item?.referer || "",
     item
   )
 
@@ -3824,17 +4191,17 @@ Pulsa el botón para abrir la ventana.`)
 
     if (needsResolution(originalUrl)) {
       setDebug(`🔍 Resolviendo ${source.label}...`)
-      urlToPlay = await resolveStreamUrl(originalUrl, item?.referer || "")
+      urlToPlay = await resolveStreamUrl(originalUrl, source?.meta?.referer || item?.referer || "")
       if(!isOpenRequestCurrent(requestId)) return
     }
 
     if (!urlToPlay) {
-      clearResolveCache(makeResolveCacheKey(originalUrl, item?.referer || ""))
+      clearResolveCache(makeResolveCacheKey(originalUrl, source?.meta?.referer || item?.referer || ""))
       continue
     }
 
     if (urlToPlay === originalUrl && needsResolution(originalUrl)) {
-      clearResolveCache(makeResolveCacheKey(originalUrl, item?.referer || ""))
+      clearResolveCache(makeResolveCacheKey(originalUrl, source?.meta?.referer || item?.referer || ""))
       continue
     }
 
@@ -3855,7 +4222,12 @@ ${urlToPlay}`)
         ? {
             ...item,
             _resolvedFromHost: !resolvedIsDirectMedia,
-            referer: item?.referer || originalUrl
+            referer: source?.meta?.referer || item?.referer || originalUrl,
+            userAgent: source?.meta?.userAgent || item?.userAgent || "",
+            headers: source?.meta?.headers || item?.headers,
+            drm: source?.meta?.drmKeys ? { clearkey: source.meta.drmKeys } : item?.drm,
+            embed: !!(source?.meta?.embed || item?.embed),
+            import: !!(source?.meta?.import || item?.import)
           }
         : item
     )
@@ -3864,7 +4236,7 @@ ${urlToPlay}`)
 
   if(!isOpenRequestCurrent(requestId)) return
 
-  clearResolveCache(makeResolveCacheKey(item?.url || firstSourceUrl, item?.referer || ""))
+  clearResolveCache(makeResolveCacheKey(item?.url || firstSourceUrl, sourceEntries[0]?.meta?.referer || item?.referer || ""))
   applyStatusToUrlPair("dead", item?.url || firstSourceUrl, firstSourceUrl)
   showPlayerEmpty("Vídeo no válido o enlace muerto")
 
@@ -3998,6 +4370,7 @@ function renderBrowser(){
     '<div class="card-type">'+(isGroup ? 'Carpeta' : (stationContainer ? 'Carpeta' : 'Vídeo'))+'</div>'+
     '<div class="card-title">'+escapeHtml(item.name || item.title || "Sin título")+'</div>'+
     '<div class="card-meta">'+escapeHtml(meta)+'</div>'+
+    getInfoQuickButtonHtml(item)+
     (isEditModeOn()
       ? '<details class="card-menu browser-item-menu">'+
           '<summary class="menu-btn" type="button">⋮</summary>'+
@@ -4032,6 +4405,11 @@ const pop=card.querySelector('.menu-pop')
 })
 
 if(summary) summary.addEventListener('click', ()=>setTimeout(()=>closeAllLibraryMenus(menu), 0))
+
+card.querySelector(".info-quick-btn")?.addEventListener("click",(e)=>{
+  e.stopPropagation()
+  focusBrowserItemInfo(item, item?.name || item?.title || "Explorador")
+})
 
 card.querySelector(".edit-item")?.addEventListener("click",(e)=>{
   e.stopPropagation()
@@ -4091,7 +4469,8 @@ card.querySelector(".edit-item")?.addEventListener("click",(e)=>{
         '<div class="card-meta">'+escapeHtml(meta)+'</div>'+
         (item.import?'<div class="card-badge">IMPORT</div>':'')+
         (isEmbedStation(item)?'<div class="card-badge">EMBED</div>':'')+
-        (isEditModeOn() ? '<details class="card-menu browser-item-menu"><summary class="menu-btn" type="button">⋮</summary><div class="menu-pop"><button class="btn small move-left" type="button">Mover izda</button><button class="btn small move-right" type="button">Mover dcha</button>'+getServerMenuButtonsHtml(item)+'<button class="btn small edit-item" type="button">Editar</button></div></details>' : '')+
+        getInfoQuickButtonHtml(item)+
+        (isEditModeOn() ? '<details class="card-menu browser-item-menu"><summary class="menu-btn" type="button">⋮</summary><div class="menu-pop">'+getMoveMenuButtonsHtml()+'<div class="menu-inline-group move-item-pop hidden"><button class="btn small move-left" type="button">Izquierda</button><button class="btn small move-right" type="button">Derecha</button></div>'+getServerMenuButtonsHtml(item)+'<button class="btn small edit-item" type="button">Editar</button></div></details>' : '')+
       '</div>'
 
     card.onclick=async ()=>{
@@ -4118,6 +4497,10 @@ card.querySelector(".edit-item")?.addEventListener("click",(e)=>{
     })
     if(summary) summary.addEventListener('click', ()=>setTimeout(()=>closeAllLibraryMenus(menu), 0))
 
+    card.querySelector(".move-item")?.addEventListener("click",(e)=>{
+      e.stopPropagation()
+      card.querySelector(".move-item-pop")?.classList.toggle("hidden")
+    })
     card.querySelector(".move-left")?.addEventListener("click",(e)=>{
       e.stopPropagation()
       moveBrowserItem(item, child.kind, "left", node)
@@ -4138,6 +4521,11 @@ card.querySelector(".edit-item")?.addEventListener("click",(e)=>{
       })
     })
 
+    card.querySelector(".info-quick-btn")?.addEventListener("click",(e)=>{
+      e.stopPropagation()
+      focusBrowserItemInfo(item, item?.name || item?.title || "Explorador")
+    })
+
     card.querySelector(".edit-item")?.addEventListener("click",(e)=>{
       e.stopPropagation()
       fillEditorFromItem(item, editorKind, node)
@@ -4155,12 +4543,9 @@ async function addEntryAtCurrentNode(){
   const name=entryNameInput.value.trim()
   const image=entryImageInput.value.trim()
   const info=entryInfoInput.value.trim()
-  const urls=getVideoUrlsFromEditor()
+  const sourceEntries=getVideoSourceEntriesFromEditor()
+  const urls=sourceEntries.map(entry=>entry.url).filter(Boolean)
   const url=urls[0]||""
-  const referer=entryRefererInput.value.trim()
-  const userAgent=entryUserAgentInput.value.trim()
-  const extraHeaders=parseHeadersText(entryHeadersInput.value)
-  const drmKeys=parseDrmKeysText(entryDrmKeysInput.value)
 
   if(!name){ setDebug("Pon un nombre."); return }
 
@@ -4188,7 +4573,7 @@ async function addEntryAtCurrentNode(){
     }else{
       if(!url){ setDebug("Pon al menos una URL."); return }
 
-      const previousUrls=getItemSourceEntries(editingItemRef).map(x=>String(x.url||"").trim()).filter(Boolean)
+      const previousEntries=getItemSourceEntries(editingItemRef)
 
       editingItemRef.name=name
       editingItemRef.image=image
@@ -4198,69 +4583,51 @@ async function addEntryAtCurrentNode(){
         if(/^url\d+$/i.test(key)) delete editingItemRef[key]
       })
 
-      urls.slice(1).forEach((extraUrl, idx)=>{
-        editingItemRef[`url${idx+2}`]=extraUrl
+      clearAllUrlMetaFields(editingItemRef)
+
+      sourceEntries.forEach((entry, idx)=>{
+        const sourceKey=idx===0 ? "url" : `url${idx+1}`
+
+        if(idx>0) editingItemRef[sourceKey]=entry.url
+        applySourceMetaToItem(editingItemRef, sourceKey, entry.source)
       })
-
-      if(entryImportToggle.checked) editingItemRef.import=true
-      else delete editingItemRef.import
-
-      if(entryEmbedToggle.checked) editingItemRef.embed=true
-      else delete editingItemRef.embed
 
       if(info) editingItemRef.info=info
       else delete editingItemRef.info
-
-      if(referer) editingItemRef.referer=referer
-      else delete editingItemRef.referer
-
-      if(userAgent) editingItemRef.userAgent=userAgent
-      else delete editingItemRef.userAgent
-
-      const cleanHeaders={ ...(extraHeaders||{}) }
-
-      if(Object.keys(cleanHeaders).length) editingItemRef.headers=cleanHeaders
-      else delete editingItemRef.headers
-
-      if(drmKeys){
-        editingItemRef.drm={ clearkey: drmKeys }
-
-        const drmEntries=Object.entries(drmKeys)
-        if(drmEntries.length===1){
-          editingItemRef.kid=drmEntries[0][0]
-          editingItemRef.key=drmEntries[0][1]
-        }else{
-          delete editingItemRef.kid
-          delete editingItemRef.key
-        }
-      }else{
-        delete editingItemRef.drm
-        delete editingItemRef.kid
-        delete editingItemRef.key
-      }
 
       if(urls.some(u => needsResolution(u))) editingItemRef.isHost=true
       else delete editingItemRef.isHost
 
       delete editingItemRef.groups
       delete editingItemRef.stations
+      delete editingItemRef.sourceOptions
 
-      const currentUrls=urls.map(v=>String(v||"").trim()).filter(Boolean)
+      const currentEntries=sourceEntries.map((entry, idx)=>({
+        url:String(entry.url||"").trim(),
+        referer:getSourceRefererForCache(entry),
+        index:idx
+      })).filter(entry=>entry.url)
+
       const changed =
-        previousUrls.length!==currentUrls.length ||
-        previousUrls.some((v, i)=>v!==currentUrls[i])
-
-      if(changed){
-        previousUrls.forEach(prevUrl=>{
-          clearLinkStatus(prevUrl)
-          clearResolveCache(prevUrl)
-          clearResolveCache(makeResolveCacheKey(prevUrl, referer))
+        previousEntries.length!==currentEntries.length ||
+        previousEntries.some((entry, i)=>{
+          const current=currentEntries[i]
+          return !current || entry.url!==current.url || (entry.meta?.referer||"")!==(current.referer||"")
         })
 
-        currentUrls.forEach(nextUrl=>{
-          clearLinkStatus(nextUrl)
-          clearResolveCache(nextUrl)
-          clearResolveCache(makeResolveCacheKey(nextUrl, referer))
+      if(changed){
+        previousEntries.forEach(entry=>{
+          const prevUrl=String(entry.url||"").trim()
+          const prevReferer=entry.meta?.referer || ""
+          clearLinkStatus(prevUrl)
+          clearResolveCache(prevUrl)
+          clearResolveCache(makeResolveCacheKey(prevUrl, prevReferer))
+        })
+
+        currentEntries.forEach(entry=>{
+          clearLinkStatus(entry.url)
+          clearResolveCache(entry.url)
+          clearResolveCache(makeResolveCacheKey(entry.url, entry.referer))
         })
       }
     }
@@ -4299,30 +4666,17 @@ async function addEntryAtCurrentNode(){
 
     const newVideo={ name, image, url }
 
-    urls.slice(1).forEach((extraUrl, idx)=>{
-      newVideo[`url${idx+2}`]=extraUrl
+    sourceEntries.forEach((entry, idx)=>{
+      const sourceKey=idx===0 ? "url" : `url${idx+1}`
+
+      if(idx>0) newVideo[sourceKey]=entry.url
+      applySourceMetaToItem(newVideo, sourceKey, entry.source)
     })
 
     if(info) newVideo.info=info
-    if(referer) newVideo.referer=referer
-    if(userAgent) newVideo.userAgent=userAgent
-    if(entryImportToggle.checked) newVideo.import=true
-    if(entryEmbedToggle.checked) newVideo.embed=true
-
-    const cleanHeaders={ ...(extraHeaders||{}) }
-    if(Object.keys(cleanHeaders).length) newVideo.headers=cleanHeaders
-
-    if(drmKeys){
-      newVideo.drm={ clearkey: drmKeys }
-
-      const drmEntries=Object.entries(drmKeys)
-      if(drmEntries.length===1){
-        newVideo.kid=drmEntries[0][0]
-        newVideo.key=drmEntries[0][1]
-      }
-    }
-
     if(urls.some(u => needsResolution(u))) newVideo.isHost=true
+
+    delete newVideo.sourceOptions
 
     if(!Array.isArray(node.stations)) node.stations=[]
     node.stations.push(newVideo)
@@ -4421,23 +4775,58 @@ on(typeStationBtn,"click",()=>setEntryType("station"))
 on(typeVideoBtn,"click",()=>setEntryType("video"))
 on(addUrlFieldBtn,"click",()=>appendVideoUrlField(""))
 on(addEntryBtn,"click",()=>{ addEntryAtCurrentNode() })
-on(manualResolveBtn,"click",async ()=>{
+async function runPendingManualResolve(useTab=false){
   if(!pendingManualResolveUrl){
     setDebug("No hay URL pendiente para resolución manual.")
     return
   }
 
+  setCheckingStatus(
+    pendingManualResolveItem?.url || pendingManualResolveUrl,
+    pendingManualResolveUrl
+  )
+
   const resolved = await resolveStreamUrlManual(
     pendingManualResolveUrl,
-    pendingManualResolveReferer || ""
+    pendingManualResolveReferer || "",
+    useTab
   )
 
   if(!resolved){
-    setDebug("No se pudo resolver manualmente.\nHaz el captcha y pulsa Proceed to video en la ventana abierta.")
+    setDebug(
+      useTab
+        ? "No se pudo resolver manualmente en pestaña nueva.\nHaz el captcha completo, deja que cargue la página del vídeo y vuelve a probar."
+        : "No se pudo resolver manualmente.\nHaz el captcha y pulsa Proceed to video en la ventana abierta."
+    )
+
+    applyStatusToUrlPair(
+      "dead",
+      pendingManualResolveItem?.url || pendingManualResolveUrl,
+      pendingManualResolveUrl
+    )
+
     return
   }
 
-  playUrl(resolved, pendingManualResolveTitle || "Reproduciendo", pendingManualResolveItem)
+  applyStatusToUrlPair(
+    "ok",
+    pendingManualResolveItem?.url || pendingManualResolveUrl,
+    resolved
+  )
+
+  playUrl(
+    resolved,
+    pendingManualResolveTitle || "Reproduciendo",
+    pendingManualResolveItem
+  )
+}
+
+on(manualResolveBtn,"click",async ()=>{
+  await runPendingManualResolve(false)
+})
+
+on(manualResolveTabBtn,"click",async ()=>{
+  await runPendingManualResolve(true)
 })
 on(infoToggleBtn,"click",()=>toggleCurrentInfo())
 on(debugToggleBtn,"click",()=>toggleDebugPanel())
