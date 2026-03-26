@@ -252,6 +252,15 @@ h2{font-size:18px;margin:0}
 .card-meta{font-size:12px;color:#bdbdbd;min-height:16px}
 .card-badge{display:inline-block;font-size:11px;background:#24314a;color:#b8d7ff;padding:4px 8px;border-radius:999px;width:fit-content}
 
+.card-badge.card-badge-seen{
+  background:#1f4d2e;
+  color:#d7ffe3;
+}
+.card-badge.card-badge-progress{
+  background:#24314a;
+  color:#b8d7ff;
+}
+
 .player-shell{width:100%;max-width:none;display:flex;justify-content:center}
 .player-wrap{position:relative;width:min(100%, 1200px);background:#000;border-radius:14px;overflow:hidden;border:1px solid #2a2a2a}
 video{width:100%;display:block;background:#000;max-height:76vh;border:0;outline:none;box-shadow:none}

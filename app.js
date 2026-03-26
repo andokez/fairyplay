@@ -120,9 +120,15 @@ let openRequestSeq=0
 let activeOpenRequestId=0
 let activeStatusOriginalUrl=""
 let activeStatusPlaybackUrl=""
+let currentPlayableItem=null
+let currentContentKey=""
+let pendingResumeTime=0
+let pendingResumeDecisionMade=false
+let pendingResumeApplied=false
 
 const SETTINGS_KEY="player_v14_settings"
 const PROGRESS_KEY="player_v14_progress"
+const SEEN_KEY="player_v14_seen"
 const LINK_STATUS_KEY="player_v14_link_status"
 const RESOLVE_CACHE_KEY="player_v14_resolve_cache"
 const RESOLVER_KEY="resolver_config"
@@ -550,8 +556,135 @@ function loadSettings(){try{return JSON.parse(localStorage.getItem(SETTINGS_KEY)
 function saveSettings(){ const s=loadSettings(); s.autoplay=autoplayToggle.checked; s.remember=rememberToggle.checked; s.editMode=editModeToggle?editModeToggle.checked!==false:true; s.showResolver=!!showResolverToggle?.checked; s.jumpSeconds=getJumpSeconds(); s.volumePercent=Number(volumeRange.value)||100; s.sidebarCollapsed=!!appRoot?.classList.contains("sidebar-collapsed"); localStorage.setItem(SETTINGS_KEY,JSON.stringify(s)); applyVolume() }
 function isEditModeOn(){ return editModeToggle ? editModeToggle.checked!==false : true }
 function loadProgressMap(){try{return JSON.parse(localStorage.getItem(PROGRESS_KEY)||"{}")}catch{return{}}}
-function saveProgress(url,time){const map=loadProgressMap(); map[url]=time; localStorage.setItem(PROGRESS_KEY,JSON.stringify(map))}
-function getProgress(url){const map=loadProgressMap(); return map[url]||0}
+function saveProgress(url,time){
+  const key=String(url||"").trim()
+  if(!key) return
+  const map=loadProgressMap()
+  map[key]={ time:Number(time)||0, updatedAt:Date.now() }
+  localStorage.setItem(PROGRESS_KEY,JSON.stringify(map))
+}
+function getProgress(url){
+  const key=String(url||"").trim()
+  if(!key) return 0
+  const map=loadProgressMap()
+  const entry=map[key]
+  if(entry && typeof entry==="object") return Number(entry.time)||0
+  return Number(entry)||0
+}
+function clearProgress(url){
+  const key=String(url||"").trim()
+  if(!key) return
+  const map=loadProgressMap()
+  delete map[key]
+  localStorage.setItem(PROGRESS_KEY,JSON.stringify(map))
+}
+function loadSeenMap(){try{return JSON.parse(localStorage.getItem(SEEN_KEY)||"{}")}catch{return{}}}
+function saveSeenMap(map){localStorage.setItem(SEEN_KEY,JSON.stringify(map||{}))}
+function getCurrentContentStack(){
+  return Array.isArray(browserStack) ? [...browserStack] : []
+}
+function getContentKey(item, stack=getCurrentContentStack()){
+  if(!item) return ""
+  const lib=currentLibrary()
+  const libPart=lib?.id || lib?.title || ""
+  const pathPart=(Array.isArray(stack)?stack:[])
+    .map(node=>String(node?.name || node?.title || "").trim())
+    .filter(Boolean)
+    .join(" / ")
+  const titlePart=String(item?.name || item?.title || "").trim()
+  return [libPart, pathPart, titlePart].join(" || ")
+}
+function saveContentProgress(itemOrKey, time, stack=getCurrentContentStack()){
+  const key=typeof itemOrKey==="string" ? itemOrKey : getContentKey(itemOrKey, stack)
+  if(!key) return
+  saveProgress(key, time)
+}
+function getContentProgress(itemOrKey, stack=getCurrentContentStack()){
+  const key=typeof itemOrKey==="string" ? itemOrKey : getContentKey(itemOrKey, stack)
+  if(!key) return 0
+  return getProgress(key)
+}
+function clearContentProgress(itemOrKey, stack=getCurrentContentStack()){
+  const key=typeof itemOrKey==="string" ? itemOrKey : getContentKey(itemOrKey, stack)
+  if(!key) return
+  clearProgress(key)
+}
+function isItemSeen(itemOrKey, stack=getCurrentContentStack()){
+  const key=typeof itemOrKey==="string" ? itemOrKey : getContentKey(itemOrKey, stack)
+  if(!key) return false
+  const map=loadSeenMap()
+  return map[key]===true
+}
+function setItemSeen(itemOrKey, seen=true, stack=getCurrentContentStack()){
+  const key=typeof itemOrKey==="string" ? itemOrKey : getContentKey(itemOrKey, stack)
+  if(!key) return
+  const map=loadSeenMap()
+  if(seen) map[key]=true
+  else delete map[key]
+  saveSeenMap(map)
+  if(seen) clearContentProgress(key)
+}
+function getItemPlaybackBadgesHtml(item, stack=getCurrentContentStack()){
+  if(!isPlayableLeaf(item) || item?.import) return ""
+  const key=getContentKey(item, stack)
+  const badges=[]
+  if(isItemSeen(key)) badges.push('<div class="card-badge card-badge-seen">VISTO</div>')
+  else{
+    const progress=getContentProgress(key)
+    if(progress>=15) badges.push('<div class="card-badge card-badge-progress">▶ '+escapeHtml(format(progress))+'</div>')
+  }
+  return badges.join("")
+}
+function setupResumeForItem(item, stack=getCurrentContentStack()){
+  currentPlayableItem=item || null
+  currentContentKey=item ? getContentKey(item, stack) : ""
+  pendingResumeTime=(item && rememberToggle?.checked) ? getContentProgress(currentContentKey) : 0
+  pendingResumeDecisionMade=false
+  pendingResumeApplied=false
+}
+function clearResumeState(){
+  currentPlayableItem=null
+  currentContentKey=""
+  pendingResumeTime=0
+  pendingResumeDecisionMade=false
+  pendingResumeApplied=false
+}
+function tryResumeCurrentPlayback(){
+  if(!rememberToggle?.checked) return
+  if(!currentContentKey || pendingResumeApplied) return
+  const duration=Number(video.duration||0)
+  const savedTime=Number(pendingResumeTime||0)
+  if(!Number.isFinite(duration) || duration<=0) return
+  if(!Number.isFinite(savedTime) || savedTime<15){
+    pendingResumeApplied=true
+    return
+  }
+  if(savedTime>=duration-5){
+    pendingResumeApplied=true
+    return
+  }
+  const targetTime=Math.max(0, Math.min(savedTime, duration-3))
+  if(!pendingResumeDecisionMade){
+    pendingResumeDecisionMade=true
+    const ok=window.confirm(`¿Continuar desde ${format(targetTime)}?`)
+    if(!ok){
+      clearContentProgress(currentContentKey)
+      pendingResumeTime=0
+      pendingResumeApplied=true
+      renderBrowser()
+      return
+    }
+  }
+  try{
+    if(Math.abs((video.currentTime||0)-targetTime)>1){
+      video.currentTime=targetTime
+    }
+    pendingResumeApplied=true
+    setDebug((debugEl?.textContent ? debugEl.textContent + "\n\n" : "") + `Continuando desde ${format(targetTime)}.`)
+  }catch{
+    return
+  }
+}
 function loadResolveCacheMap(){ try{return JSON.parse(localStorage.getItem(RESOLVE_CACHE_KEY)||"{}") }catch{return{}} }
 function saveResolveCacheMap(map){ localStorage.setItem(RESOLVE_CACHE_KEY, JSON.stringify(map||{})) }
 function getResolveCache(url){
@@ -1516,6 +1649,7 @@ function startOpenRequest(){
   const requestId=++openRequestSeq
   activeOpenRequestId=requestId
   clearActiveStatusUrls()
+  clearResumeState()
 
   try{ video.pause() }catch{}
   try{ video.removeAttribute("src") }catch{}
@@ -1549,7 +1683,22 @@ function getCurrentNodeStations(){
   return (Array.isArray(node.stations) ? node.stations : []).filter(st => st && st.url && !st.import)
 }
 function getCurrentItemIndexInNode(){ const stations=getCurrentNodeStations(); return stations.findIndex(st => makeItemKey(st)===currentItemKey) }
-async function playNextInCurrentNode(){ const stations=getCurrentNodeStations(); if(!stations.length) return false; const currentIdx=getCurrentItemIndexInNode(); const nextIdx=currentIdx>=0 ? currentIdx+1 : 0; if(nextIdx<0 || nextIdx>=stations.length) return false; await openStation(stations[nextIdx], { force: true, fromAutoNext: true }); return true }
+async function playNextInCurrentNode(options={}){
+  const stations=getCurrentNodeStations()
+  if(!stations.length) return false
+
+  const currentIdx=getCurrentItemIndexInNode()
+  const nextIdx=currentIdx>=0 ? currentIdx+1 : 0
+
+  if(nextIdx<0 || nextIdx>=stations.length) return false
+
+  if(options?.markCurrentSeen && currentIdx>=0 && stations[currentIdx]){
+    setItemSeen(stations[currentIdx], true)
+  }
+
+  await openStation(stations[nextIdx], { force: true, fromAutoNext: true })
+  return true
+}
 
 function isDirectMediaUrl(url) {
   if (!url) return false
@@ -1649,12 +1798,18 @@ function isStationContainer(item){
   return !!item &&
     !item?.url &&
     Array.isArray(item.stations) &&
-    !Array.isArray(item.groups)
+    (
+      !Array.isArray(item.groups) ||
+      item.groups.length===0
+    )
 }
 function detectEditorKindFromItem(item, fallbackKind="group"){
   if(!!item && (typeof item.url==="string" && item.url.trim()!=="")) return "video"
   if(isStationContainer(item)) return "station"
-  if(Array.isArray(item?.groups)) return "group"
+
+  const hasRealGroups=Array.isArray(item?.groups) && item.groups.length>0
+  if(hasRealGroups) return "group"
+
   return fallbackKind==="video" || fallbackKind==="station" || fallbackKind==="group"
     ? fallbackKind
     : "group"
@@ -2163,6 +2318,11 @@ async function playUrl(url,title,item=null){
   playerSection.scrollIntoView({behavior:"smooth", block:"start"})
   nowPlayingEl.textContent=title||"Reproduciendo"
   currentPlayableTitle=title||"Reproduciendo"
+
+  if(item){
+    currentPlayableItem=item
+    if(!currentContentKey) currentContentKey=getContentKey(item)
+  }
 
   try{
     const originalUrl=String(url||"").trim()
@@ -3208,6 +3368,7 @@ function normalizeImportedStationItem(it){
 
 function normalizeImportedGroupNode(group){
   const node=group && typeof group==="object" ? group : {}
+
   const rawGroups =
     Array.isArray(node.groups) ? node.groups :
     Array.isArray(node.channels) ? node.channels :
@@ -3216,8 +3377,7 @@ function normalizeImportedGroupNode(group){
 
   const rawStations =
     Array.isArray(node.stations) ? node.stations :
-    Array.isArray(node.channels) && !Array.isArray(node.groups) ? node.channels.filter(x => x && (x.url || x.link || x.file || x.src)) :
-    Array.isArray(node.items) && !Array.isArray(node.groups) ? node.items.filter(x => x && (x.url || x.link || x.file || x.src)) :
+    Array.isArray(node.list) ? node.list :
     []
 
   const groups=[]
@@ -3225,8 +3385,15 @@ function normalizeImportedGroupNode(group){
 
   for(const entry of rawGroups){
     if(!entry || typeof entry!=="object") continue
-    const hasChildren = Array.isArray(entry.groups) || Array.isArray(entry.stations) || Array.isArray(entry.channels) || Array.isArray(entry.items) || Array.isArray(entry.children)
-    const hasUrl = !!(entry.url || entry.link || entry.file || entry.src)
+
+    const hasChildren =
+      Array.isArray(entry.groups) ||
+      Array.isArray(entry.stations) ||
+      Array.isArray(entry.channels) ||
+      Array.isArray(entry.items) ||
+      Array.isArray(entry.children)
+
+    const hasUrl=!!(entry.url || entry.link || entry.file || entry.src)
 
     if(hasChildren && !hasUrl){
       groups.push(normalizeImportedGroupNode(entry))
@@ -3240,22 +3407,32 @@ function normalizeImportedGroupNode(group){
     stations.push(normalizeImportedStationItem(entry))
   }
 
-  return {
+  const out={
     name:node.name||node.title||"Lista",
-    image:node.image||node.img||node.logo||"",
-    info:node.info||node.description||"",
-    groups,
-    stations
+    image:node.image||node.img||node.logo||""
   }
+
+  const info=String(node.info||node.description||"").trim()
+  if(info) out.info=info
+
+  if(groups.length) out.groups=groups
+  if(stations.length) out.stations=stations
+
+  return out
 }
 
 function normalizeImportedData(raw, sourceUrl=""){
   if(raw && typeof raw==="object" && Array.isArray(raw.groups)){
-    return {
+    const out={
       ...raw,
-      url:raw.url||sourceUrl||"",
       groups:raw.groups.map(group=>normalizeImportedGroupNode(group))
     }
+
+    const finalUrl=raw.url||sourceUrl||""
+    if(finalUrl) out.url=finalUrl
+    else delete out.url
+
+    return out
   }
 
   if(Array.isArray(raw)){
@@ -3263,11 +3440,10 @@ function normalizeImportedData(raw, sourceUrl=""){
       name:"Biblioteca importada",
       image:"",
       author:"",
-      url:sourceUrl||"",
+      ...(sourceUrl ? { url:sourceUrl } : {}),
       groups:[{
         name:"Lista",
         image:"",
-        groups:[],
         stations:raw.map(it=>normalizeImportedStationItem(it))
       }]
     }
@@ -3285,30 +3461,41 @@ function normalizeImportedData(raw, sourceUrl=""){
       Array.isArray(raw.list) ? raw.list : null
 
     if(rootGroups){
-      return {
+      const out={
         name:raw.name||raw.title||"Biblioteca importada",
         image:raw.image||raw.img||raw.logo||"",
         author:raw.author||"",
-        info:raw.info||raw.description||"",
-        url:raw.url||sourceUrl||"",
         groups:rootGroups.map(group=>normalizeImportedGroupNode(group))
       }
+
+      const info=String(raw.info||raw.description||"").trim()
+      if(info) out.info=info
+
+      const finalUrl=raw.url||sourceUrl||""
+      if(finalUrl) out.url=finalUrl
+
+      return out
     }
 
     if(rootStations){
-      return {
+      const out={
         name:raw.name||raw.title||"Biblioteca importada",
         image:raw.image||raw.img||raw.logo||"",
         author:raw.author||"",
-        info:raw.info||raw.description||"",
-        url:raw.url||sourceUrl||"",
         groups:[{
           name:"Lista",
           image:"",
-          groups:[],
           stations:rootStations.map(it=>normalizeImportedStationItem(it))
         }]
       }
+
+      const info=String(raw.info||raw.description||"").trim()
+      if(info) out.info=info
+
+      const finalUrl=raw.url||sourceUrl||""
+      if(finalUrl) out.url=finalUrl
+
+      return out
     }
   }
 
@@ -3318,6 +3505,9 @@ function normalizeImportedData(raw, sourceUrl=""){
 
   return null
 }
+
+
+
 function extractLikelyJsonPayload(text){
   const raw=String(text||"").trim()
   if(!raw) return ""
@@ -3637,7 +3827,7 @@ function getNodeChildren(node){
 
   const groups=Array.isArray(node?.groups)
     ? node.groups.map(child => ({
-        kind: Array.isArray(child?.groups) ? "group" : "station",
+        kind: isStationContainer(child) ? "station" : "group",
         data: child
       }))
     : []
@@ -3786,9 +3976,13 @@ function storeEditorClipboardFromCurrent(mode="copy"){
 function cutEditingItem(){
   if(!storeEditorClipboardFromCurrent("cut")) return
 
-  let arr=null
-  if(editingKind==="group") arr=editingParentNode.groups
-  else if(editingKind==="station" || editingKind==="video") arr=editingParentNode.stations
+let arr=null
+
+if(Array.isArray(editingParentNode.groups) && editingParentNode.groups.includes(editingItemRef)){
+  arr=editingParentNode.groups
+}else if(Array.isArray(editingParentNode.stations) && editingParentNode.stations.includes(editingItemRef)){
+  arr=editingParentNode.stations
+}
 
   if(!Array.isArray(arr)){
     setDebug("No se pudo cortar el elemento.")
@@ -3876,14 +4070,21 @@ function moveBrowserItem(item, kind, direction, parentNode){
   if(!parentNode) return
 
   let arr=null
-  if(kind==="group") arr=parentNode.groups
-  else if(kind==="station" || kind==="video") arr=parentNode.stations
+
+  if(Array.isArray(parentNode.groups) && parentNode.groups.includes(item)){
+    arr=parentNode.groups
+  }else if(Array.isArray(parentNode.stations) && parentNode.stations.includes(item)){
+    arr=parentNode.stations
+  }
 
   if(!Array.isArray(arr)) return
+
   const idx=arr.indexOf(item)
   if(idx<0) return
+
   const next=direction==="left" ? idx-1 : idx+1
   if(!moveArrayItem(arr, idx, next)) return
+
   renderLibraryList()
   renderBrowser()
   saveLibrariesSoon()
@@ -3893,14 +4094,22 @@ function deleteBrowserItem(item, kind, parentNode){
   if(!parentNode) return
 
   let arr=null
-  if(kind==="group") arr=parentNode.groups
-  else if(kind==="station" || kind==="video") arr=parentNode.stations
+
+  if(Array.isArray(parentNode.groups) && parentNode.groups.includes(item)){
+    arr=parentNode.groups
+  }else if(Array.isArray(parentNode.stations) && parentNode.stations.includes(item)){
+    arr=parentNode.stations
+  }
 
   if(!Array.isArray(arr)) return
+
   const idx=arr.indexOf(item)
   if(idx<0) return
+
   arr.splice(idx,1)
+
   if(item===editingItemRef) clearEditorForm()
+
   renderLibraryList()
   renderBrowser()
   saveLibrariesSoon()
@@ -4101,6 +4310,7 @@ async function openStation(item, options={}) {
   const requestId = startOpenRequest()
 
   currentItemKey = makeItemKey(item)
+  setupResumeForItem(item)
 
   showPlayerEmpty("Cargando o resolviendo vídeo...")
   nowPlayingEl.textContent = item?.name || item?.title || "Reproduciendo"
@@ -4370,6 +4580,7 @@ function renderBrowser(){
     '<div class="card-type">'+(isGroup ? 'Carpeta' : (stationContainer ? 'Carpeta' : 'Vídeo'))+'</div>'+
     '<div class="card-title">'+escapeHtml(item.name || item.title || "Sin título")+'</div>'+
     '<div class="card-meta">'+escapeHtml(meta)+'</div>'+
+    getItemPlaybackBadgesHtml(item, result.stack)+
     getInfoQuickButtonHtml(item)+
     (isEditModeOn()
       ? '<details class="card-menu browser-item-menu">'+
@@ -4467,6 +4678,7 @@ card.querySelector(".edit-item")?.addEventListener("click",(e)=>{
         '</div>'+
         '<div class="card-title">'+escapeHtml(item.name || item.title || "Sin título")+'</div>'+
         '<div class="card-meta">'+escapeHtml(meta)+'</div>'+
+        getItemPlaybackBadgesHtml(item)+
         (item.import?'<div class="card-badge">IMPORT</div>':'')+
         (isEmbedStation(item)?'<div class="card-badge">EMBED</div>':'')+
         getInfoQuickButtonHtml(item)+
@@ -4555,7 +4767,23 @@ async function addEntryAtCurrentNode(){
       editingItemRef.image=image
 
       if(!Array.isArray(editingItemRef.groups)) editingItemRef.groups=[]
-      if(!Array.isArray(editingItemRef.stations)) editingItemRef.stations=[]
+      delete editingItemRef.stations
+      delete editingItemRef.url
+      delete editingItemRef.import
+      delete editingItemRef.embed
+      delete editingItemRef.referer
+      delete editingItemRef.userAgent
+      delete editingItemRef.headers
+      delete editingItemRef.drm
+      delete editingItemRef.kid
+      delete editingItemRef.key
+      delete editingItemRef.isHost
+      delete editingItemRef.sourceOptions
+
+      Object.keys(editingItemRef).forEach(key=>{
+        if(/^url\d*$/i.test(key)) delete editingItemRef[key]
+        if(/^url\d+(Referer|UserAgent|Headers|Drm|Import|Embed|Kid|Key)$/i.test(key)) delete editingItemRef[key]
+      })
 
       if(info) editingItemRef.info=info
       else delete editingItemRef.info
@@ -4566,6 +4794,22 @@ async function addEntryAtCurrentNode(){
 
       if(!Array.isArray(editingItemRef.stations)) editingItemRef.stations=[]
       delete editingItemRef.groups
+      delete editingItemRef.url
+      delete editingItemRef.import
+      delete editingItemRef.embed
+      delete editingItemRef.referer
+      delete editingItemRef.userAgent
+      delete editingItemRef.headers
+      delete editingItemRef.drm
+      delete editingItemRef.kid
+      delete editingItemRef.key
+      delete editingItemRef.isHost
+      delete editingItemRef.sourceOptions
+
+      Object.keys(editingItemRef).forEach(key=>{
+        if(/^url\d*$/i.test(key)) delete editingItemRef[key]
+        if(/^url\d+(Referer|UserAgent|Headers|Drm|Import|Embed|Kid|Key)$/i.test(key)) delete editingItemRef[key]
+      })
 
       if(info) editingItemRef.info=info
       else delete editingItemRef.info
@@ -4644,13 +4888,23 @@ async function addEntryAtCurrentNode(){
     if(isStationContainer(node)){ setDebug("Dentro de una station no puedes crear groups."); return }
     if(!Array.isArray(node.groups)) node.groups=[]
 
-    const newGroup={name, image, groups:[]}
+    const newGroup={
+      name,
+      image,
+      groups:[]
+    }
+
     if(info) newGroup.info=info
 
     node.groups.push(newGroup)
 
   }else if(newEntryType==="station"){
-    const newStation={name, image, stations:[]}
+    const newStation={
+      name,
+      image,
+      stations:[]
+    }
+
     if(info) newStation.info=info
 
     if(isStationContainer(node)){
@@ -4856,7 +5110,12 @@ on(playPauseBtn,"click",togglePlay)
 on(backBtn,"click",()=>jumpBy(-getJumpSeconds()))
 on(forwardBtn,"click",()=>jumpBy(getJumpSeconds()))
 on(forwardBtn,"wheel",(e)=>{ e.preventDefault(); const delta=e.deltaY>0?-1:1; setJumpSeconds(getJumpSeconds()+delta) })
-on(nextItemBtn,"click",async ()=>{ const ok=await playNextInCurrentNode(); if(!ok) setDebug("No hay siguiente vídeo en esta lista.") })
+on(nextItemBtn,"click",async ()=>{
+  if(currentPlayableItem) setItemSeen(currentPlayableItem, true)
+  const ok=await playNextInCurrentNode({ markCurrentSeen:false })
+  if(!ok) setDebug("No hay siguiente vídeo en esta lista.")
+  renderBrowser()
+})
 on(subsBtn,"click",toggleSubtitles)
 on(muteBtn,"click",()=>{ showVolumePanel(); video.muted=!video.muted; updateMuteLabel() })
 on(fullscreenBtn,"click",toggleFullscreen)
@@ -4873,7 +5132,19 @@ on(playerWrap,"mousemove",showControlsTemporarily)
 on(playerWrap,"mouseleave",()=>{ if(!video.paused) playerWrap.classList.add('controls-hidden') })
 on(playerWrap,"click",showControlsTemporarily)
 
-video.ontimeupdate=()=>{ const c=video.currentTime||0, d=video.duration||0; progressRange.value=d?(c/d)*100:0; timeLabel.textContent=format(c)+" / "+format(d); if(rememberToggle.checked){ const src=video.currentSrc || video.src; if(src) saveProgress(src,video.currentTime) } }
+video.ontimeupdate=()=>{
+  const c=video.currentTime||0, d=video.duration||0
+  progressRange.value=d?(c/d)*100:0
+  timeLabel.textContent=format(c)+" / "+format(d)
+
+  if(rememberToggle.checked && currentContentKey && Number.isFinite(d) && d>0){
+    if(c>5 && c<d-5){
+      saveContentProgress(currentContentKey, c)
+    }
+  }
+}
+video.onloadedmetadata=()=>{ tryResumeCurrentPlayback(); updateSubtitleButton() }
+video.oncanplay=()=>{ tryResumeCurrentPlayback() }
 video.onplay=()=>{ updatePlayLabel(); showControlsTemporarily() }
 video.onplaying=()=>{
   updatePlayLabel()
@@ -4886,7 +5157,20 @@ video.onplaying=()=>{
   markActiveStatus("ok")
 }
 video.onpause=()=>{ updatePlayLabel(); keepControlsVisible() }
-video.onended=async ()=>{ updatePlayLabel(); keepControlsVisible(); if(autoplayToggle.checked){ const ok=await playNextInCurrentNode(); if(!ok) setDebug("Fin de la lista.") } }
+video.onended=async ()=>{
+  updatePlayLabel()
+  keepControlsVisible()
+
+  if(currentPlayableItem){
+    setItemSeen(currentPlayableItem, true)
+    renderBrowser()
+  }
+
+  if(autoplayToggle.checked){
+    const ok=await playNextInCurrentNode({ markCurrentSeen:false })
+    if(!ok) setDebug("Fin de la lista.")
+  }
+}
 video.onvolumechange=updateMuteLabel
 video.onerror=()=>{ markActiveStatus("dead") }
 document.addEventListener("fullscreenchange",updateFullscreenLabel)
